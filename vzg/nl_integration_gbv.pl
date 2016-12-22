@@ -25,6 +25,7 @@ binmode(STDOUT, ":utf8");
 
 use POSIX qw(strftime);
 use File::Copy;
+use Path::Class;
 use Scalar::Util qw(looks_like_number);
 use List::Util qw(min max);
 use List::MoreUtils qw(first_index);
@@ -42,7 +43,11 @@ use Data::Dumper;
 use PICA::Data ':all';
 
 
-my $knownSeals = 'known_seals.json';    # JSON-Datei mit Paketinformationen
+my $packageDir = dir("packages");
+my $titleDir = dir("titles");
+my $warningDir = dir("warnings");
+
+my $knownSeals = 'known_seals.json'; # JSON-Datei mit Paketinformationen
 my $baseUrl = 'http://localhost:8080/gokb/'; # URL der Ziel-GOKb
 my $ncsu_orgs = do {              # JSON-Datei mit GOKb-Organisationsdaten
   open(my $orgs_in, '<' , "ONLD.jsonld")
@@ -51,10 +56,11 @@ my $ncsu_orgs = do {              # JSON-Datei mit GOKb-Organisationsdaten
   <$orgs_in>
 };
 my %orgsJSON = %{decode_json($ncsu_orgs)} or die "Konnte JSON mit NCSU-Orgs nicht dekodieren! \n";
-my $gokbUser;
-my $gokbPw;
 
 # Handle parameters
+
+my $gokbUser;
+my $gokbPw;
 
 my $argP = first_index { $_ eq '--packages' } @ARGV;
 my $argT = first_index { $_ eq '--tsv' } @ARGV;
@@ -173,9 +179,21 @@ if(scalar @ARGV == 0){
   }elsif($selected == 2){
     createTSV();
   }elsif($selected == 3){
-    createJSON("", 0);
+    createJSON(0);
   }elsif($selected == 4){
-    createJSON("", 1);
+    print "GOKb-Benutzername:\n";
+    $gokbUser = <STDIN>;
+    chomp $gokbUser;
+    ReadMode 2;
+    print "GOKb-Passwort:\n";
+    $gokbPw = <STDIN>;
+    ReadMode 0;
+    chomp $gokbPw;
+    if($gokbUser && $gokbPw){
+      createJSON(1);
+    }else{
+      print "Kein Benutzername/Passwort eingegeben, beende Programm!\n";
+    }
   }else{
     print "Keine valide Option gewählt. Beende Programm!\n";
   }
@@ -254,7 +272,7 @@ sub getSeals {
   my $JSON = JSON->new->utf8->canonical;
   my %alljson;
   if(-e $knownSeals){
-    copy($knownSeals, 'known_seals_last.json');
+    copy($knownSeals, $knownSeals."_last.json");
   }
   open( my $out, '>', $knownSeals ) or die "Failed to open $knownSeals for writing";
 
@@ -417,9 +435,9 @@ sub createTSV {
       next;
     }
     my $ts = strftime "%Y%m%d", localtime;
-    my $tsvName = $sigel.".tsv";
+    my $tsvName = $packageDir->file($sigel.".tsv");
     if (-e $tsvName) {
-      copy($tsvName, $sigel.'_last.tsv');
+      copy($tsvName, $packageDir->file($sigel.'_last.tsv'));
       open(my $fh, '>:encoding(UTF-8)', $tsvName) or die "Could not open file '$tsvName' $!";
       close($fh);
     }
@@ -696,19 +714,31 @@ sub createJSON {
     local $/;
     <$json_fh>
   };
+  $packageDir->mkpath( { verbose => 0 } );
+  $titleDir->mkpath( { verbose => 0 } );
+  $warningDir->mkpath( { verbose => 0 } );
 
   my $out_warnings;
   my $out_warnings_zdb;
   my $out_warnings_gvk;
 
   if(!$filter){
-    open( $out_warnings, '>', "Warnings_all.json" ) or die "Failed to open Warnings.json for writing";
-    open( $out_warnings_zdb, '>', "Warnings_zdb_all.json" ) or die "Failed to open Warnings.json for writing";
-    open( $out_warnings_gvk, '>', "Warnings_gvk_all.json" ) or die "Failed to open Warnings.json for writing";
+    my $wfile = $warningDir->file("Warnings_all.json");
+    $out_warnings = $wfile->touch()->openw();
+    $out_warnings_zdb = $warningDir->file("Warnings_zdb_all.json")->touch()->openw();
+    $out_warnings_gvk = $warningDir->file("Warnings_gvk_all.json")->touch()->openw();
   }else{
-    open( $out_warnings, '>', "Warnings_$filter.json" ) or die "Failed to open Warnings_$filter.json for writing";
-    open( $out_warnings_zdb, '>', "Warnings_zdb_$filter.json" ) or die "Failed to open Warnings_$filter.json for writing";
-    open( $out_warnings_gvk, '>', "Warnings_gvk_$filter.json" ) or die "Failed to open Warnings_$filter.json for writing";
+    my $wdir = $warningDir->subdir($filter);
+    $wdir->mkpath({verbose => 0});
+    my $wfile = $wdir->file("Warnings_$filter.json");
+    $wfile->touch();
+    $out_warnings = $wfile->openw();
+    my $wzfile = $wdir->file("Warnings_zdb_$filter.json");
+    $wzfile->touch();
+    $out_warnings_zdb = $wzfile->openw();
+    my $wgfile = $wdir->file("Warnings_gvk_$filter.json");
+    $wgfile->touch();
+    $out_warnings_gvk = $wgfile->openw();
   }
 
   # Statistics
@@ -745,10 +775,10 @@ sub createJSON {
   my %knownSelection;
   if($filter){
     $knownSelection{$filter} = $known{$filter};
-    print "Creating title list for $filter!\n";
+    print "Generating JSON only for $filter!\n";
   }else{
     %knownSelection = %known;
-    print "Creating title lists for all packages!\n"
+    print "Generating JSON for all packages!\n";
   }
   my $startTime = time();
 
@@ -772,10 +802,12 @@ sub createJSON {
       if(-e "$sigel.json"){
         copy("$sigel.json", $sigel."_last.json");
       }
-      open( $out_pkg, '>', "$sigel.json" ) or die "Failed to open $sigel.json for writing";
+      my $pfile = $packageDir->file("$sigel.json");
+      $pfile->touch();
+      $out_pkg = $pfile->openw();
     }
 
-    print "Processing Package $packagesTotal, ".$sigel."...\n";
+    print "Processing Package ".($packagesTotal + 1).", ".$sigel."...\n";
     if(scalar @{ $knownSelection{$sigel}{'zdbOrgs'} } == 0){
       print "Paket hat keine verknüpften Institutionen in der ZBD. Überspringe Paket.\n";
       next;
@@ -1612,7 +1644,9 @@ sub createJSON {
   say $out_warnings_gvk $json_warning_gvk->pretty(1)->encode( \%authorityNotesGVK );
 
   if($filter){
-    open( my $out_titles, '>', "titles_$filter.json" ) or die "Failed to open titles_$filter.json for writing";
+    my $tfile = $titleDir->file("titles_$filter.json");
+    $tfile->touch();
+    my $out_titles = $tfile->openw();
     say $out_titles $json_titles->pretty(1)->encode( \@allTitles );
     close($out_titles);
   }
@@ -1742,8 +1776,8 @@ sub writeLine {
   my $tsvSigel = $_[0];
   my $i = 0;
   my @columns = $_[1];
-  my $filename = $tsvSigel.".tsv";
-  open(my $fh, '>>:encoding(UTF-8)', $filename) or die "Could not open file '$filename' $!";
+  my $file = $packageDir->file($tsvSigel.".tsv");
+  my $fh = $file->opena();
   foreach my $column (@{$columns[0]}){
     $i++;
     print $fh $column;
