@@ -435,10 +435,10 @@ sub createTSV {
       next;
     }
     my $ts = strftime "%Y%m%d", localtime;
-    my $tsvName = $packageDir->file($sigel.".tsv");
-    if (-e $tsvName) {
-      copy($tsvName, $packageDir->file($sigel.'_last.tsv'));
-      open(my $fh, '>:encoding(UTF-8)', $tsvName) or die "Could not open file '$tsvName' $!";
+    my $tsvFile = $packageDir->file($sigel.".tsv");
+    if (-e $tsvFile) {
+      copy($tsvFile, $packageDir->file($sigel.'_last.tsv'));
+      open(my $fh, '>:encoding(UTF-8)', $tsvFile) or die "Could not open file '$tsvFile' $!";
       close($fh);
     }
     my %attrs = (
@@ -724,9 +724,14 @@ sub createJSON {
 
   if(!$filter){
     my $wfile = $warningDir->file("Warnings_all.json");
-    $out_warnings = $wfile->touch()->openw();
-    $out_warnings_zdb = $warningDir->file("Warnings_zdb_all.json")->touch()->openw();
-    $out_warnings_gvk = $warningDir->file("Warnings_gvk_all.json")->touch()->openw();
+    $wfile->touch();
+    $out_warnings = $wfile->openw();
+    my $wzfile = $warningDir->file("Warnings_zdb_all.json");
+    $wzfile->touch();
+    $out_warnings_zdb = $wzfile->openw();
+    my $wgfile = $warningDir->file("Warnings_gvk_all.json");
+    $wgfile->touch();
+    $out_warnings_gvk = $wgfile->openw();
   }else{
     my $wdir = $warningDir->subdir($filter);
     $wdir->mkpath({verbose => 0});
@@ -1777,6 +1782,7 @@ sub writeLine {
   my $i = 0;
   my @columns = $_[1];
   my $file = $packageDir->file($tsvSigel.".tsv");
+  $file->touch();
   my $fh = $file->opena();
   foreach my $column (@{$columns[0]}){
     $i++;
