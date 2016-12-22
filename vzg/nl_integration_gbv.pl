@@ -119,7 +119,7 @@ if($argP >= 0){
         print "Falsches Format der DB-Daten! Abbruch!\n";
     }
   }else{
-      print "Datenbankinformationen fehlen/falsch! Format ist: \"data_source,username,password\"\n"
+      print "Datenbankinformationen fehlen/falsch! Format ist: \"data_source,username,password\"\n";
   }
 }elsif($argT >= 0){
   if(-e $knownSeals){
@@ -708,9 +708,9 @@ sub createJSON {
   my $postData = $_[0];
   my ($filter) = $_[1];
 
-  my $json_text = do {
+  my $json_seals = do {
     open(my $json_fh, '<' , $knownSeals)
-        or die("Can't open \$filename\": $!\n");
+        or die("Can't open \$knownSeals\": $!\n");
     local $/;
     <$json_fh>
   };
@@ -776,7 +776,7 @@ sub createJSON {
 
   # Input JSON handling
 
-  my %known = %{decode_json($json_text)} or die "JSON nicht vorhanden! \n";
+  my %known = %{decode_json($json_seals)} or die "JSON nicht vorhanden! \n";
   my %knownSelection;
   if($filter){
     $knownSelection{$filter} = $known{$filter};
@@ -801,7 +801,7 @@ sub createJSON {
     my %allIDs;
     my %alljson;
 
-    my $json_out = JSON->new->utf8->canonical;
+    my $json_pkg = JSON->new->utf8->canonical;
     my $out_pkg;
     if($filter){
       if(-e "$sigel.json"){
@@ -1291,13 +1291,15 @@ sub createJSON {
             if($tempEndYear){
               $relatedEndYear = $tempEndYear;
               if($subField eq 'd') {
-                # push @titleWarnings, { '039Ed' => $relTitle[$subfPos+1] };
+                push @titleWarnings, { '039Ed' => $relTitle[$subfPos+1] , 'comment' => 'Datumsangaben gehören in Unterfeld f.'};
+                push @titleWarningsGVK, { '039Ed' => $relTitle[$subfPos+1] , 'comment' => 'Datumsangaben gehören in Unterfeld f.' };
               }
             }
             if($tempStartYear){
               $relatedStartYear = $tempStartYear;
               if($subField eq 'd') {
-                # push @titleWarnings, { '039Ed' => $relTitle[$subfPos+1] };
+                push @titleWarnings, { '039Ed' => $relTitle[$subfPos+1] , 'comment' => 'Datumsangaben gehören in Unterfeld f.' };
+                push @titleWarningsGVK, { '039Ed' => $relTitle[$subfPos+1] , 'comment' => 'Datumsangaben gehören in Unterfeld f.' };
               }
             }
             if($subField eq 'f'){
@@ -1404,7 +1406,7 @@ sub createJSON {
                 };
               }
             }else{
-              print "Konnte keinen direkten Vorgänger bzw. Nachfolger ausmachen für Daten $start_year-$end_year und $relatedStartYear-".($relatedEndYear ? $relatedEndYear : "")."\n";
+              print "Konnte keinen direkten Vorgänger bzw. Nachfolger ausmachen für Daten $start_year-".($end_year != 0 ? $end_year : "")." und $relatedStartYear-".($relatedEndYear ? $relatedEndYear : "")."\n";
             }
           }
         }
@@ -1444,7 +1446,7 @@ sub createJSON {
         }
 
         if(!$sourceURL || length $sourceURL > 255 || $sourceURL eq ""){
-          print "Skipping overlong URL!\n";
+          print "Skipping TIPP with overlong URL!\n";
           next;
         }
         if($publicComments ne "Deutschlandweit zugänglich"){
@@ -1471,7 +1473,7 @@ sub createJSON {
             next;
           }
         }else{
-          "Looks like a wrong URL >".pica_value($titleRecord, '006Z0')."\n";
+          print "Looks like a wrong URL >".pica_value($titleRecord, '006Z0')."\n";
           push @titleWarnings , {'009P0'=> $sourceURL};
           push @titleWarningsZDB , {'009P0'=> $sourceURL};
           next;
@@ -1631,7 +1633,7 @@ sub createJSON {
       }
     }
     if($filter){
-      say $out_pkg $json_out->pretty(1)->encode( \%alljson );
+      say $out_pkg $json_pkg->pretty(1)->encode( \%alljson );
     }
     if($postData == 1){
       print "Submitting Package $sigel to GOKb..\n";
@@ -1697,14 +1699,14 @@ sub postData {
   
   if($data && ref($data) eq 'HASH'){
   
-    my $json_out = JSON->new->utf8->canonical;
+    my $json_gokb = JSON->new->utf8->canonical;
     my %decData = %{ $data };  
     my $ua = LWP::UserAgent->new;
     $ua->timeout(1800);
     my $req = HTTP::Request->new(POST => $endPoint);
     $req->header('content-type' => 'application/json');
     $req->authorization_basic($gokbUser, $gokbPw);
-    $req->content($json_out->encode( \%decData ));
+    $req->content($json_gokb->encode( \%decData ));
     
     my $resp = $ua->request($req);
     if($resp->is_success){
