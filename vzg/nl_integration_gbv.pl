@@ -458,7 +458,7 @@ sub createTSV {
 
       if(substr(pica_value($titleRecord, '002@0'), 0, 2) ne 'Ob' && $currentTitle <= 2){
         print "Überspringe Paket ".$sigel.": Nicht-Zeitschrift in den ersten 2 Treffern: ".pica_value($titleRecord, '002@0')."\n";
-        unlink $tsvName or warn "Konnte Titelliste für ".$sigel." nicht löschen!\n";
+        unlink $tsvFile or warn "Konnte Titelliste für ".$sigel." nicht löschen!\n";
         last;
       }elsif(substr(pica_value($titleRecord, '002@0'), 0, 2) ne 'Ob'){
         print "Überspringe Titel ".pica_value($titleRecord, '021Aa').", Materialcode: ".pica_value($titleRecord, '002@0')."\n";
@@ -1291,15 +1291,27 @@ sub createJSON {
             if($tempEndYear){
               $relatedEndYear = $tempEndYear;
               if($subField eq 'd') {
-                push @titleWarnings, { '039Ed' => $relTitle[$subfPos+1] , 'comment' => 'Datumsangaben gehören in Unterfeld f.'};
-                push @titleWarningsGVK, { '039Ed' => $relTitle[$subfPos+1] , 'comment' => 'Datumsangaben gehören in Unterfeld f.' };
+                push @titleWarnings, {
+                  '039Ed' => $relTitle[$subfPos+1],
+                  'comment' => 'Datumsangaben gehören in Unterfeld f.'
+                };
+                push @titleWarningsGVK, {
+                  '039Ed' => $relTitle[$subfPos+1],
+                  'comment' => 'Datumsangaben gehören in Unterfeld f.'
+                };
               }
             }
             if($tempStartYear){
               $relatedStartYear = $tempStartYear;
               if($subField eq 'd') {
-                push @titleWarnings, { '039Ed' => $relTitle[$subfPos+1] , 'comment' => 'Datumsangaben gehören in Unterfeld f.' };
-                push @titleWarningsGVK, { '039Ed' => $relTitle[$subfPos+1] , 'comment' => 'Datumsangaben gehören in Unterfeld f.' };
+                push @titleWarnings, {
+                  '039Ed' => $relTitle[$subfPos+1],
+                  'comment' => 'Datumsangaben gehören in Unterfeld f.'
+                };
+                push @titleWarningsGVK, {
+                  '039Ed' => $relTitle[$subfPos+1],
+                  'comment' => 'Datumsangaben gehören in Unterfeld f.'
+                };
               }
             }
             if($subField eq 'f'){
@@ -1436,6 +1448,9 @@ sub createJSON {
               push @titleWarnings , {'009P0'=> $sourceURL};
               push @titleWarningsGVK , {'009P0'=> $sourceURL};
               $sourceURL =~ s/http\/\//http:\/\//;
+            }
+            if(index($sourceURL, '=u ') == 0){
+              $sourceURL =~ s/=u\s//;
             }
           }elsif($subField eq 'x'){
             $internalComments = $eSource[$subfPos+1];
@@ -1680,7 +1695,7 @@ sub createJSON {
   print "$noPubGiven Titel ohne Verlag (033An)\n";
   print "$noPubMatch Verlagsfelder mit der GOKb unbekanntem Verlagsnamen (033An)\n";
   print "$pubFromAuthor als Verlag verwendete Autoren (021Ah)\n";
-  print "$pubFromAuthor als Verlag verwendete Primärkörperschaften (029Aa)\n";
+  print "$pubFromCorp als Verlag verwendete Primärkörperschaften (029Aa)\n";
   if($skippedPackages ne ""){
     print "Wegen Fehler beim Upload übersprungene Pakete: $skippedPackages \n";
   }

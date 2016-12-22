@@ -35852,6 +35852,24 @@
         } ,
 
         {
+            "@id": "http://www.lib.ncsu.edu/ld/onld/00006116" ,
+            "skos:prefLabel": "Suhrkamp Verlag AG" ,
+            "skos:altLabel": [
+                "Suhrkamp Verlag" ,
+                "Suhrkamp / Insel" ,
+                "Suhrkamp"
+            ],
+            "foaf:homepage": "http://www.suhrkamp.de/" ,
+            "@type": [
+                "http://dbpedia.org/ontology/Organisation" ,
+                "http://xmlns.com/foaf/0.1/Agent" ,
+                "http://xmlns.com/foaf/0.1/Organization" ,
+                "http://www.w3.org/2002/07/owl#Thing" ,
+                "http://schema.org/Organization"
+            ]
+        } ,
+
+        {
             "@id": "http://www.lib.ncsu.edu/ld/onld/00001117" ,
             "skos:prefLabel": "Svadhyaya Publications" ,
             "@type": [

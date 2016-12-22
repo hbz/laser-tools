@@ -12709,7 +12709,8 @@
             "The Berkeley Electronic Press" ,
             "BE Press" ,
             "Berkeley Press" ,
-            "Berkeley Electronic Press"
+            "Berkeley Electronic Press" ,
+            "Berkeley Electronic Press, Bepress"
             ] ,
             "foaf:homepage": "http://www.bepress.com/" ,
             "skos:closeMatch": [
@@ -19967,7 +19968,8 @@
             "skos:altLabel": [  
             "The Economist Intelligence Unit" ,
             "Economic Intelligence Unit" ,
-            "Economist Intelligence Unit Ltd"
+            "Economist Intelligence Unit Ltd" ,
+            "EIU"
             ] ,
             "foaf:homepage": "http://www.eiu.com/" ,
             "skos:closeMatch": [
@@ -26719,7 +26721,8 @@
         "@id": "http://www.lib.ncsu.edu/ld/onld/00001164" ,
         "skos:prefLabel": "Informa Healthcare" ,
             "skos:altLabel": [  
-            "Informa (Firm). Informa Healthcare"
+            "Informa (Firm). Informa Healthcare" ,
+            "Informa Healthcare, Taylor & Francis Group"
             ] ,
             "foaf:homepage": "http://sites.informahealthcare.com/" ,
             "skos:closeMatch": [
@@ -27436,7 +27439,8 @@
             "Institute of Physics and the Physical Society" ,
             "Institute of Physics Publishing?" ,
             "Institute of Physics and the London Mathematical Society" ,
-            "IOP Pub"
+            "IOP Pub" ,
+            "Inst. of Physics"
             ] ,
             "foaf:homepage": "http://www.iop.org/" ,
             "skos:closeMatch": [
@@ -27810,7 +27814,40 @@
         "http://schema.org/Organization" 
         ]
                 } ,
+        {
+            "@id": "http://www.lib.ncsu.edu/ld/onld/00005532" ,
+            "skos:prefLabel": "Central and Eastern European Online Library" ,
+            "skos:altLabel": [
+                "CEEOL" ,
+                "Central and Eastern European Online Library GmbH"
+            ] ,
+            "foaf:homepage": "http://ceeol.com/" ,
+            "@type": [
+                "http://dbpedia.org/ontology/Organisation" ,
+                "http://xmlns.com/foaf/0.1/Agent" ,
+                "http://xmlns.com/foaf/0.1/Organization" ,
+                "http://www.w3.org/2002/07/owl#Thing" ,
+                "http://schema.org/Organization"
+            ]
+        } ,
 
+        {
+            "@id": "http://www.lib.ncsu.edu/ld/onld/00005562" ,
+            "skos:prefLabel": "Integrum World Wide" ,
+            "skos:altLabel": [
+                "Integrum Worldwide Corp" ,
+                "Integrum" ,
+                "Integrum World LLC"
+            ] ,
+            "foaf:homepage": "http://www.integrumworld.com/" ,
+            "@type": [
+                "http://dbpedia.org/ontology/Organisation" ,
+                "http://xmlns.com/foaf/0.1/Agent" ,
+                "http://xmlns.com/foaf/0.1/Organization" ,
+                "http://www.w3.org/2002/07/owl#Thing" ,
+                "http://schema.org/Organization"
+            ]
+        } ,
         {
         "@id": "http://www.lib.ncsu.edu/ld/onld/00003027" ,
         "skos:prefLabel": "Integrated Publishing Association" ,
@@ -28374,7 +28411,8 @@
         "skos:prefLabel": "International Monetary Fund" ,
             "skos:altLabel": [  
             "International Monetaray Fund" ,
-            "International Montetary Fund"
+            "International Montetary Fund" ,
+            "IMF"
             ] ,
             "foaf:homepage": "http://www.imf.org/external/index.htm" ,
             "skos:closeMatch": [
@@ -33299,7 +33337,8 @@
             "Mary Ann Liebert Inc" ,
             "Mary Ann Liebert, Inc., publishers" ,
             "Mary Ann Liebert, Inc" ,
-            "Mary Ann Liebert Publishers"
+            "Mary Ann Liebert Publishers" ,
+            "Liebert"
             ] ,
             "foaf:homepage": "http://www.liebertpub.com/" ,
             "skos:closeMatch": [
@@ -36486,7 +36525,8 @@
             "Nature Publishing" ,
             "Nature Pub. Group, Inc" ,
             "Nature Study Publishing Co" ,
-            "Nature Publishing Group- UK"
+            "Nature Publishing Group- UK" ,
+            "Nature America"
             ] ,
             "foaf:homepage": "http://www.nature.com/" ,
             "skos:closeMatch": [
@@ -46382,6 +46422,24 @@
                 } ,
 
         {
+            "@id": "http://www.lib.ncsu.edu/ld/onld/00006116" ,
+            "skos:prefLabel": "Suhrkamp Verlag AG" ,
+            "skos:altLabel": [
+                "Suhrkamp Verlag" ,
+                "Suhrkamp / Insel" ,
+                "Suhrkamp"
+            ],
+            "foaf:homepage": "http://www.suhrkamp.de/" ,
+            "@type": [
+                "http://dbpedia.org/ontology/Organisation" ,
+                "http://xmlns.com/foaf/0.1/Agent" ,
+                "http://xmlns.com/foaf/0.1/Organization" ,
+                "http://www.w3.org/2002/07/owl#Thing" ,
+                "http://schema.org/Organization"
+            ]
+        } ,
+
+        {
         "@id": "http://www.lib.ncsu.edu/ld/onld/00002769" ,
         "skos:prefLabel": "Sultan Qaboos University" ,
             "foaf:homepage": "http://www.squ.edu.om/" ,
@@ -48279,7 +48337,8 @@
             "Trans Tech Publications Ltd." ,
             "Trans Tech Publications" ,
             "Trans Tech Publications Ltd" ,
-            "Trans Tech Publishers"
+            "Trans Tech Publishers" ,
+            "Trans Tech Publ."
             ] ,
             "foaf:homepage": "http://www.ttp.net/" ,
             "skos:closeMatch": [
@@ -57012,7 +57071,8 @@
         "skos:prefLabel": "World Bank Publications" ,
             "skos:altLabel": [  
             "World Bank" ,
-            "The World Bank"
+            "The World Bank" ,
+            "World Bank Group"
             ] ,
             "foaf:homepage": "http://publications.worldbank.org/" ,
             "skos:closeMatch": [
