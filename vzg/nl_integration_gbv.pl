@@ -62,12 +62,21 @@ my %orgsJSON = %{decode_json($ncsu_orgs)} or die "Konnte JSON mit NCSU-Orgs nich
 my $gokbUser;
 my $gokbPw;
 
+## Should the TitleList be verified by the uploading Account?
+
+my $verifyTitleList = 0;
+
+## Restrict Titles to Journals?
+
+my $onlyJournals = 1;
+
+
 my $argP = first_index { $_ eq '--packages' } @ARGV;
 my $argT = first_index { $_ eq '--tsv' } @ARGV;
 my $argJ = first_index { $_ eq '--json' } @ARGV;
 my $argPost = first_index { $_ eq '--post' } @ARGV;
 
-if(index($ARGV[$argPost+1], "http") == 0){
+if($ARGV[$argPost+1] && index($ARGV[$argPost+1], "http") == 0){
   $baseUrl = $ARGV[$argPost+1];
 }
 
@@ -494,7 +503,7 @@ sub createTSV {
 
       my $title = "";
       my $issn = "";
-      my $eissn = "";
+      my $eissn = formatISSN(pica_value($titleRecord, '005A0'));
       my $fromTime = $dts[0][0];
       my $firstVol = pica_value($titleRecord, '031Nd') ? pica_value($titleRecord, '031Nd') : "";
       my $firstIssue = pica_value($titleRecord, '031Ne') ? pica_value($titleRecord, '031Ne') : "";
@@ -718,6 +727,8 @@ sub createJSON {
   $titleDir->mkpath( { verbose => 0 } );
   $warningDir->mkpath( { verbose => 0 } );
 
+  # Warnings
+
   my $out_warnings;
   my $out_warnings_zdb;
   my $out_warnings_gvk;
@@ -726,21 +737,26 @@ sub createJSON {
     my $wfile = $warningDir->file("Warnings_all.json");
     $wfile->touch();
     $out_warnings = $wfile->openw();
+
     my $wzfile = $warningDir->file("Warnings_zdb_all.json");
     $wzfile->touch();
     $out_warnings_zdb = $wzfile->openw();
+
     my $wgfile = $warningDir->file("Warnings_gvk_all.json");
     $wgfile->touch();
     $out_warnings_gvk = $wgfile->openw();
   }else{
     my $wdir = $warningDir->subdir($filter);
     $wdir->mkpath({verbose => 0});
+
     my $wfile = $wdir->file("Warnings_$filter.json");
     $wfile->touch();
     $out_warnings = $wfile->openw();
+
     my $wzfile = $wdir->file("Warnings_zdb_$filter.json");
     $wzfile->touch();
     $out_warnings_zdb = $wzfile->openw();
+
     my $wgfile = $wdir->file("Warnings_gvk_$filter.json");
     $wgfile->touch();
     $out_warnings_gvk = $wgfile->openw();
@@ -813,17 +829,28 @@ sub createJSON {
     }
 
     print "Processing Package ".($packagesTotal + 1).", ".$sigel."...\n";
-    if(scalar @{ $knownSelection{$sigel}{'zdbOrgs'} } == 0){
+    if($onlyJournals == 1 && scalar @{ $knownSelection{$sigel}{'zdbOrgs'} } == 0){
       print "Paket hat keine verknüpften Institutionen in der ZBD. Überspringe Paket.\n";
       next;
     }
 
     ## Package Header
 
+
+    my $userListVer = "";
+    my $listVerDate = "";
+
+    if($verifyTitleList != 0 && $gokbUser){
+      $userListVer = $gokbUser;
+      $listVerDate = convertToTimeStamp(strftime('%Y-%m-%d', localtime));
+    }
+
     my $provider = $knownSelection{$sigel}{'provider'};
     my $pkgName = $knownSelection{$sigel}{'name'};
     $pkgName =~ s/:\s//g;
     my $pkgYear = strftime '%Y', localtime;
+    my $pkgPlatform = $knownSelection{$sigel}{'platformURL'} ? $knownSelection{$sigel}{'platformURL'} : "";
+
     $alljson{'packageHeader'} = {
       name => "$provider: $pkgName: NL $pkgYear",
       # identifiers => { name => "ISIL", value => $sigel },
@@ -837,12 +864,12 @@ sub createJSON {
       consistent => "Yes",
       fixed => "Yes",
       paymentType => "",
-      global => "Global",
+      global => "Consortium",
       listVerifier => "",
-      userListVerifier => "",
-      nominalPlatform => $knownSelection{$sigel}{'platformURL'} ? $knownSelection{$sigel}{'platformURL'} : "",
+      userListVerifier => $userListVer,
+      nominalPlatform => $pkgPlatform,
       nominalProvider => $provider,
-      listVerifiedDate => "",
+      listVerifiedDate => $listVerDate,
       source => {
           url => "http://sru.gbv.de/gvk",
           name => "GVK-SRU",
@@ -855,9 +882,14 @@ sub createJSON {
 
     $alljson{'tipps'} = [];
 
+    my $qryString = 'pica.xpr='.$sigel;
+    if($onlyJournals == 1){
+      $qryString .= ' and (pica.mak=Obvz or pica.mak=Obv)';
+    }
+    $qryString .= ' sortBy year/sort.ascending';
     my %attrs = (
       base => 'http://sru.gbv.de/gvk',
-      query => 'pica.xpr='.$sigel.' and (pica.mak=Obvz or pica.mak=Obv) sortBy year/sort.ascending',
+      query => $qryString,
       recordSchema => 'picaxml',
       parser => 'picaxml',
       _max_results => 5
@@ -873,6 +905,20 @@ sub createJSON {
 
     while (my $titleRecord = $sruTitles->next){
       $currentTitle++;
+      my $materialType = pica_value($titleRecord, '002@0');
+      my $gokbType;
+      if(substr($materialType, 1, 1) eq 'b'){
+        $gokbType = "Serial";
+      }else{
+        $gokbType = "";
+      }
+      my $gokbMedium;
+      if(substr($materialType, 1, 1) eq 'b'){
+        $gokbMedium = "Journal";
+      }else{
+        $gokbMedium = "";
+      }
+      my $ppn = pica_value($titleRecord, '003@0');
       my %titleInfo;
       my $id;
       my $eissn;
@@ -881,72 +927,111 @@ sub createJSON {
       my @titleWarningsZDB;
       my @titleWarningsGVK;
 
-      # Check, if the title is a journal (shouldn't be necessary since it's included in the search query)
+      # Check, if the title is a journal (shouldn't be necessary since it should be included in the search query)
 
-      if(substr(pica_value($titleRecord, '002@0'), 0, 2) ne 'Ob' || pica_value($titleRecord, '003@0') eq '510617395'){
-        print "Überspringe Titel ".pica_value($titleRecord, '021Aa').", Materialcode: ".pica_value($titleRecord, '002@0')."\n";
+      if($onlyJournals == 1 && substr($materialType, 0, 2) ne 'Ob'){
+        print "Überspringe Titel ".pica_value($titleRecord, '021Aa').", Materialcode: ".$materialType."\n";
         next;
       }
-
-      print "Verarbeite Titel ".$currentTitle." von Paket ".$sigel."(".pica_value($titleRecord, '006Z0').")\n";
+      if(pica_value($titleRecord, '006Z0')){
+        print "Verarbeite Titel ".$currentTitle." von Paket ".$sigel."(".pica_value($titleRecord, '006Z0').")\n";
+      }else{
+        print "Verarbeite Titel ".$currentTitle." von Paket ".$sigel."(".$ppn.")\n";
+      }
 
       # -------------------- Identifiers --------------------
 
       $titleInfo{'identifiers'} = [];
 
-      ## ZDB-ID
+      ## PPN
 
-      if(pica_value($titleRecord, '006Z0')){
-        my @zdbIDs = pica_values($titleRecord, '006Z0');
-        foreach my $zdbID (@zdbIDs){
-          $zdbID =~ s/-//g;
-          if($zdbID =~ /^\d*[xX]?$/){
-            $zdbID =~ s/x/X/g;
-            substr($zdbID, -1, 0, '-');
-            $id = $zdbID;
+      push @{ $titleInfo{'identifiers'} } , {
+        'type' => "gvk_ppn",
+        'value' => $ppn
+      };
+
+      ## Journal-IDs
+
+      if(substr($materialType, 0, 2) eq 'Ob'){
+
+        ## ZDB-ID
+
+        if(pica_value($titleRecord, '006Z0')){
+          my @zdbIDs = pica_values($titleRecord, '006Z0');
+          foreach my $zdbID (@zdbIDs){
+            if(formatZdbId($zdbID)){
+              $id = formatZdbId($zdbID);
+            }
           }
+          if($id){
+            push @{ $titleInfo{'identifiers'} } , {
+              'type' => "zdb",
+              'value' => $id
+            };
+          }
+        }else{
+          print "Titel mit ppn ".pica_value($titleRecord, '003@0')." hat keine ZDB-ID! Überspringe Titel..\n";
+          push @titleWarnings, { '006Z0' => pica_values($titleRecord, '006Z0') };
+          push @titleWarningsGVK, { '006Z0' => pica_values($titleRecord, '006Z0') };
+          next;
         }
-        if($id){
-          push @{ $titleInfo{'identifiers'} } , { 'type' => "zdb", 'value' => $id };
-        }
-      }else{
-        print "Titel mit ppn ".pica_value($titleRecord, '003@0')." hat keine ZDB-ID! Überspringe Titel..\n";
-        push @titleWarnings, { '006Z0' => pica_values($titleRecord, '006Z0') };
-        push @titleWarningsGVK, { '006Z0' => pica_values($titleRecord, '006Z0') };
-        next;
-      }
 
-      ## eISSN
+        ## eISSN
 
-      if(pica_value($titleRecord, '005A0')){
-        my $unformatedIssn = pica_value($titleRecord, '005A0');
-        if(index($unformatedIssn, '-') eq '-1'){
-          $eissn = join('-', unpack('a4 a4', $unformatedIssn));
-          $eissn =~ s/x/X/g;
-          if($allISSN{$eissn} || ( $globalIDs{$id} && $globalIDs{$id}{'eissn'} ne $eissn ) ){
+        if(pica_value($titleRecord, '005A0')){
+          my $eissn = formatISSN(pica_value($titleRecord, '005A0'));
+
+          if($eissn eq ""){
+            print "ISSN scheint ungültig zu sein!\n";
+            push @titleWarnings, {
+              '005A0' => $eissn
+            };
+            push @titleWarningsZDB, {
+              '005A0' => $eissn
+            };
+          }elsif($allISSN{$eissn} || ( $globalIDs{$id} && $globalIDs{$id}{'eissn'} ne $eissn ) ){
             print "ISSN wurde bereits vergeben!\n";
             $duplicateISSNs++;
-            push @titleWarnings, { '005A0' => $eissn , 'comment' => 'gleiche eISSN nach Titeländerung?' };
-            push @titleWarningsZDB, { '005A0' => $eissn , 'comment' => 'gleiche eISSN nach Titeländerung?' };
+            push @titleWarnings, {
+              '005A0' => $eissn,
+              'comment' => 'gleiche eISSN nach Titeländerung?'
+            };
+            push @titleWarningsZDB, {
+              '005A0' => $eissn,
+              'comment' => 'gleiche eISSN nach Titeländerung?'
+            };
           }else{
-            push @{ $titleInfo{'identifiers'}} , { 'type' => "eissn", 'value' => $eissn };
+            push @{ $titleInfo{'identifiers'}} , {
+              'type' => "eissn",
+              'value' => $eissn
+            };
             $allISSN{$eissn} = pica_value($titleRecord, '021Aa');
           }
         }
-      }
 
-      ## pISSN
+        ## pISSN
 
-      if(pica_value($titleRecord, '005P0')){
-        my $unformatedIssn = pica_value($titleRecord, '005P0');
-        if(index($unformatedIssn, '-') eq '-1'){
-          my $pissn = join('-', unpack('a4 a4', $unformatedIssn));
-          $pissn =~ s/x/X/g;
-          if($allISSN{$pissn}){
-            print "Print-ISSN wurde bereits als eISSN vergeben!\n";
+        if(pica_value($titleRecord, '005P0')){
+          my $pissn = formatISSN(pica_value($titleRecord, '005P0'));
+          if($pissn eq ""){
+            print "Parallel-ISSN scheint ungültig zu sein!\n";
+            push @titleWarnings, {
+              '005A0' => $pissn
+            };
+            push @titleWarningsZDB, {
+              '005A0' => $pissn
+            };
+          }elsif($allISSN{$pissn}){
+            print "Parallel-ISSN wurde bereits als eISSN vergeben!\n";
             $wrongISSN++;
-            push @titleWarnings, { '005P0' => $pissn , 'comment' => 'gleiche Vorgänger-eISSN als Parallel-ISSN?' };
-            push @titleWarningsZDB, { '005P0' => $pissn , 'comment' => 'gleiche Vorgänger-eISSN als Parallel-ISSN?' };
+            push @titleWarnings, {
+              '005P0' => $pissn,
+              'comment' => 'gleiche Vorgänger-eISSN als Parallel-ISSN?'
+            };
+            push @titleWarningsZDB, {
+              '005P0' => $pissn,
+              'comment' => 'gleiche Vorgänger-eISSN als Parallel-ISSN?'
+            };
           }
         }
       }
@@ -986,7 +1071,7 @@ sub createJSON {
         $titleInfo{'name'} = $titleField;
         
       }else{
-        print "Keinen Titel für ".pica_value($titleRecord, '006Z0')." erkannt, überspringe Titel!\n";
+        print "Keinen Titel für ".$ppn." erkannt, überspringe Titel!\n";
         push @titleWarnings, { '021Aa' => pica_value($titleRecord, '021Aa') };
         push @titleWarningsZDB, { '021Aa' => pica_value($titleRecord, '021Aa') };
         next;
@@ -1007,7 +1092,7 @@ sub createJSON {
 
       # -------------------- Release notes --------------------
 
-      my @releaseNotes = @{ pica_fields($titleRecord, '031N')};
+      my @releaseNotes = @{ pica_fields($titleRecord, '031N') };
       my %releaseStart = (
         'year' => "",
         'month' => "",
@@ -1151,6 +1236,11 @@ sub createJSON {
           foreach my $subField (@pub){
 
             if($subField eq 'n'){
+              if($tempPub){
+                push @titleWarnings, { '033A' => \@pub };
+                push @titleWarningsZDB, { '033A' => \@pub };
+                push @titleWarningsGVK, { '033A' => \@pub };
+              }
               $preCorrectedPub = $pub[$subfPos+1];
               $tempPub = $pub[$subfPos+1];
             }
@@ -1179,6 +1269,7 @@ sub createJSON {
           }
 
           ## RAK-Abkürzungen ersetzen/auflösen
+
           $tempPub =~ s/[\[\]]//g;
           $tempPub =~ s/u\.\s?a\.//g;
 
@@ -1206,13 +1297,17 @@ sub createJSON {
 
             $tempPub =~ s/(^|\s)([Aa]cad)\.?(\s|$)/$1Academic$3/g;
           }
+
+          ## Verlag verifizieren & hinzufügen
+
           my $ncsuPub = searchNcsuOrgs($tempPub);
+
           if($ncsuPub ne '0'){
             push @{ $titleInfo{'publisher_history'}} , {
                 'name' => $ncsuPub,
                 'startDate' => $pubStart ? $pubStart : "",
                 'endDate' => $pubEnd ? $pubEnd : "",
-                'status' => $pubEnd && $pubEnd ne convertToTimeStamp($dts[0][1], 1) ? "Former" : "Active"
+                'status' => "Active"
             };
           }elsif($ncsuPub eq '0' || $tempPub =~ /[\[\]]/ || $tempPub =~ /u\.\s?a\./){
             $noPubMatch++;
@@ -1221,6 +1316,8 @@ sub createJSON {
           }
         }
       }
+
+      ## Im Autor- bzw. Körperschaftsfeld nach Ersatz suchen
 
       if(scalar @{ $titleInfo{'publisher_history'} } == 0) {
 
@@ -1271,14 +1368,10 @@ sub createJSON {
             $relationType = $relTitle[$subfPos+1];
 
           }elsif($subField eq 'ZDB' && $relTitle[$subfPos+1] eq '6'){
-            my $oID = $relTitle[$subfPos+2];
-            $oID =~ s/-//g;
-            if($oID =~ /^\d*[xX]?$/){
-              $oID =~ s/x/X/g;
-              substr($oID, -1, 0, '-');
+            my $oID = formatZdbId($relTitle[$subfPos+2]);
+            if($oID){
               $relatedID = $oID;
             }
-
           }elsif($subField eq 't' || $subField eq 'a'){
 
             $relName = $relTitle[$subfPos+1];
@@ -1343,7 +1436,10 @@ sub createJSON {
                   'date' => convertToTimeStamp($start_year, 0),
                   'from' => [{
                       'title' => $relName ? $relName : "",
-                      'identifiers' => [ { 'type' => "zdb", 'value' => $relatedID } ]
+                      'identifiers' => [{
+                          'type' => "zdb",
+                          'value' => $relatedID
+                      }]
                   }],
                   'to' => [{
                       'title' => $titleInfo{'name'},
@@ -1357,7 +1453,10 @@ sub createJSON {
                       'date' => convertToTimeStamp($relatedEndYear, 1),
                       'from' => [{
                           'title' => $relName ? $relName : "",
-                          'identifiers' => [ { 'type' => "zdb", 'value' => $relatedID } ]
+                          'identifiers' => [{
+                              'type' => "zdb",
+                              'value' => $relatedID
+                          }]
                       }],
                       'to' => [{
                           'title' => $titleInfo{'name'},
@@ -1369,7 +1468,10 @@ sub createJSON {
                       'date' => convertToTimeStamp($end_year, 1),
                       'to' => [{
                           'title' => $relName ? $relName : "",
-                          'identifiers' => [ { 'type' => "zdb", 'value' => $relatedID } ]
+                          'identifiers' => [{
+                              'type' => "zdb",
+                              'value' => $relatedID
+                          }]
                       }],
                       'from' => [{
                           'title' => $titleInfo{'name'},
@@ -1382,7 +1484,10 @@ sub createJSON {
                     'date' => convertToTimeStamp($relatedEndYear, 1),
                     'from' => [{
                         'title' => $relName ? $relName : "",
-                        'identifiers' => [ { 'type' => "zdb", 'value' => $relatedID } ]
+                        'identifiers' => [{
+                            'type' => "zdb",
+                            'value' => $relatedID
+                        }]
                     }],
                     'to' => [{
                         'title' => $titleInfo{'name'},
@@ -1397,7 +1502,10 @@ sub createJSON {
                   'date' => convertToTimeStamp($end_year, 1),
                   'to' => [{
                       'title' => $relName ? $relName : "",
-                      'identifiers' => [ { 'type' => "zdb", 'value' => $relatedID } ]
+                      'identifiers' => [{
+                          'type' => "zdb",
+                          'value' => $relatedID
+                      }]
                   }],
                   'from' => [{
                       'title' => $titleInfo{'name'},
@@ -1409,7 +1517,10 @@ sub createJSON {
                     'date' => convertToTimeStamp($start_year, 0),
                     'from' => [{
                         'title' => $relName ? $relName : "",
-                        'identifiers' => [ { 'type' => "zdb", 'value' => $relatedID } ]
+                        'identifiers' => [{
+                            'type' => "zdb",
+                            'value' => $relatedID
+                        }]
                     }],
                     'to' => [{
                         'title' => $titleInfo{'name'},
@@ -1601,7 +1712,7 @@ sub createJSON {
           'embargo' => ""
         };
 
-        # -------------------- TitleInstance --------------------
+        # -------------------- TitleInstance (in TIPP) --------------------
 
         $tipp{'title'} = {
           'identifiers' => [],
@@ -1638,7 +1749,10 @@ sub createJSON {
       }
       $titlesTotal++;
       if(!$allIDs{$id}){
-        $allIDs{$id} = { 'title' => $titleInfo{'name'}, 'connected' => \@relatedPrev };
+        $allIDs{$id} = {
+            'title' => $titleInfo{'name'},
+            'connected' => \@relatedPrev
+        };
         unless($globalIDs{$id}){
           $globalIDs{$id} = { 'eissn' => $eissn };
         }
@@ -1738,6 +1852,36 @@ sub postData {
   }else{
     print "Wrong endpoint or no data!\n";
     return -1;
+  }
+}
+
+# ensure ISSN format;
+
+sub formatISSN {
+  my ($issn) = $_[0];
+  if($issn && $issn =~ /^[0-9xX]{4}-?[0-9xX]{4}$/){
+    if(index($issn, '-') eq '-1'){
+      $issn = join('-', unpack('a4 a4', $issn));
+    }
+    $issn =~ s/x/X/g;
+    return $issn;
+  }else{
+    return "";
+  }
+}
+
+# ensure ZDB-ID format
+
+sub formatZdbId {
+  my ($id) = $_[0];
+
+  if($id && $id =~ /^\d*-?[xX]?$/){
+    $id =~ s/-//g;
+    $id =~ s/x/X/g;
+    substr($id, -1, 0, '-');
+    return $id;
+  }else{
+    return;
   }
 }
 
@@ -1879,5 +2023,3 @@ sub transformDate {
   }
   return \@combined;
 }
-
-

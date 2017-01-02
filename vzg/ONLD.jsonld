@@ -20951,7 +20951,10 @@
         "@id": "http://www.lib.ncsu.edu/ld/onld/00001460" ,
         "skos:prefLabel": "European Mathematical Society" ,
             "skos:altLabel": [  
-            "European Mathematical Society"
+            "European Mathematical Society Publishing House" ,
+            "EMS" ,
+            "EMS Publ. House" ,
+            "EMS Publishing House"
             ] ,
             "foaf:homepage": "http://www.euro-math-soc.eu/" ,
             "skos:closeMatch": [
