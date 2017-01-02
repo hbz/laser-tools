@@ -42,14 +42,33 @@ use Catmandu::Importer::SRU::Parser::picaxml;
 use Data::Dumper;
 use PICA::Data ':all';
 
+# Config
+
+## Output directories
 
 my $packageDir = dir("packages");
 my $titleDir = dir("titles");
 my $warningDir = dir("warnings");
 
-my $knownSeals = 'known_seals.json'; # JSON-Datei mit Paketinformationen
-my $baseUrl = 'http://localhost:8080/gokb/'; # URL der Ziel-GOKb
-my $ncsu_orgs = do {              # JSON-Datei mit GOKb-Organisationsdaten
+## Should the TitleList be verified by the uploading Account?
+
+my $verifyTitleList = 0;
+
+## Restrict Titles to Journals?
+
+my $onlyJournals = 1;
+
+## JSON-Datei mit Paketinformationen
+
+my $knownSeals = 'known_seals.json';
+
+## URL der Ziel-GOKb
+
+my $baseUrl = 'http://localhost:8080/gokb/';
+
+## JSON-Datei mit GOKb-Organisationsdaten
+
+my $ncsu_orgs = do {
   open(my $orgs_in, '<' , "ONLD.jsonld")
       or die("Can't open ONLD.jsonld: $!\n");
   local $/;
@@ -61,15 +80,6 @@ my %orgsJSON = %{decode_json($ncsu_orgs)} or die "Konnte JSON mit NCSU-Orgs nich
 
 my $gokbUser;
 my $gokbPw;
-
-## Should the TitleList be verified by the uploading Account?
-
-my $verifyTitleList = 0;
-
-## Restrict Titles to Journals?
-
-my $onlyJournals = 1;
-
 
 my $argP = first_index { $_ eq '--packages' } @ARGV;
 my $argT = first_index { $_ eq '--tsv' } @ARGV;
@@ -393,7 +403,7 @@ sub getSeals {
 }
 
 # Create title lists from package metadata
-# !OLD method, now using createJSON()
+# !OLD method, now using createJSON() -- may not function properly any more
 
 sub createTSV {
   my $filter = $_[0];
@@ -723,6 +733,7 @@ sub createJSON {
     local $/;
     <$json_fh>
   };
+
   $packageDir->mkpath( { verbose => 0 } );
   $titleDir->mkpath( { verbose => 0 } );
   $warningDir->mkpath( { verbose => 0 } );
@@ -745,7 +756,8 @@ sub createJSON {
     my $wgfile = $warningDir->file("Warnings_gvk_all.json");
     $wgfile->touch();
     $out_warnings_gvk = $wgfile->openw();
-  }else{
+  }
+  else{
     my $wdir = $warningDir->subdir($filter);
     $wdir->mkpath({verbose => 0});
 
@@ -801,6 +813,9 @@ sub createJSON {
     %knownSelection = %known;
     print "Generating JSON for all packages!\n";
   }
+
+  # Start timer
+
   my $startTime = time();
 
 
@@ -819,6 +834,7 @@ sub createJSON {
 
     my $json_pkg = JSON->new->utf8->canonical;
     my $out_pkg;
+
     if($filter){
       if(-e "$sigel.json"){
         copy("$sigel.json", $sigel."_last.json");
@@ -835,7 +851,6 @@ sub createJSON {
     }
 
     ## Package Header
-
 
     my $userListVer = "";
     my $listVerDate = "";
@@ -907,27 +922,33 @@ sub createJSON {
       $currentTitle++;
       my $materialType = pica_value($titleRecord, '002@0');
       my $gokbType;
-      if(substr($materialType, 1, 1) eq 'b'){
-        $gokbType = "Serial";
-      }else{
-        $gokbType = "";
-      }
       my $gokbMedium;
-      if(substr($materialType, 1, 1) eq 'b'){
-        $gokbMedium = "Journal";
-      }else{
-        $gokbMedium = "";
-      }
       my $ppn = pica_value($titleRecord, '003@0');
       my %titleInfo;
       my $id;
       my $eissn;
       my @relatedPrev = ();
+
       my @titleWarnings;
       my @titleWarningsZDB;
       my @titleWarningsGVK;
 
-      # Check, if the title is a journal (shouldn't be necessary since it should be included in the search query)
+      # Process material code
+
+      if(substr($materialType, 1, 1) eq 'b'){
+        $gokbType = "Serial";
+      }else{
+        $gokbType = "";
+      }
+
+      if(substr($materialType, 1, 1) eq 'b'){
+        $gokbMedium = "Journal";
+      }else{
+        $gokbMedium = "";
+      }
+
+      # Check, if the title is a journal
+      # (shouldn't be necessary since it should be included in the search query)
 
       if($onlyJournals == 1 && substr($materialType, 0, 2) ne 'Ob'){
         print "Überspringe Titel ".pica_value($titleRecord, '021Aa').", Materialcode: ".$materialType."\n";
@@ -1079,11 +1100,11 @@ sub createJSON {
 
       # -------------------- Other GOKb Fields --------------------
 
-      $titleInfo{'type'} = "Serial";
+      $titleInfo{'type'} = $gokbType;
       $titleInfo{'status'} = "Current";
       $titleInfo{'editStatus'} = "In Progress";
       $titleInfo{'shortcode'} = "";
-      $titleInfo{'medium'} = "Journal";
+      $titleInfo{'medium'} = $gokbMedium;
       $titleInfo{'defaultAccessURL'} = "";
       $titleInfo{'OAStatus'} = "";
       $titleInfo{'issuer'} = "";
@@ -1535,6 +1556,8 @@ sub createJSON {
         }
       }
 
+      # -------------------- TIPPS (Online-Ressourcen) --------------------
+
       my @onlineSources = @{ pica_fields($titleRecord, '009P[05]') };
       my $noViableUrl = 1;
 
@@ -1550,8 +1573,8 @@ sub createJSON {
         my $sourceURL = "";
         my $internalComments = "";
         my $publicComments = "";
-
         my $subfPos = 0;
+
         foreach my $subField (@eSource){
           if($subField eq 'a'){
             $sourceURL = $eSource[$subfPos+1];
@@ -1599,7 +1622,7 @@ sub createJSON {
             next;
           }
         }else{
-          print "Looks like a wrong URL >".pica_value($titleRecord, '006Z0')."\n";
+          print "Looks like a wrong URL >".$id."\n";
           push @titleWarnings , {'009P0'=> $sourceURL};
           push @titleWarningsZDB , {'009P0'=> $sourceURL};
           next;
@@ -1717,7 +1740,7 @@ sub createJSON {
         $tipp{'title'} = {
           'identifiers' => [],
           'name' => "",
-          'type' => 'Serial'
+          'type' => $gokbType
         };
 
         ## Name
@@ -1732,22 +1755,29 @@ sub createJSON {
         }
 
         push @{ $alljson{'tipps'} } , \%tipp;
-      }
+      } # End TIPP
+
+      # -------------------- Compile warning files --------------------
+
       if($noViableUrl == 1){
         $numNoUrl++;
         push @titleWarnings , {'009P0'=> "ZDB-URLs != GVK-URLs?"};
         push @titleWarningsGVK , {'009P0'=> "ZDB-URLs != GVK-URLs?"};
       }
       if(scalar @titleWarnings > 0){
-        $authorityNotes{ $knownSelection{$sigel}{'authority'} }{$sigel}{ pica_value($titleRecord, '006Z0') } = \@titleWarnings;
+        $authorityNotes{ $knownSelection{$sigel}{'authority'} }{$sigel}{ $id } = \@titleWarnings;
       }
       if(scalar @titleWarningsZDB > 0){
-        $authorityNotesZDB{ $knownSelection{$sigel}{'authority'} }{$sigel}{ pica_value($titleRecord, '006Z0') } = \@titleWarningsZDB;
+        $authorityNotesZDB{ $knownSelection{$sigel}{'authority'} }{$sigel}{ $id } = \@titleWarningsZDB;
       }
       if(scalar @titleWarningsGVK > 0){
-        $authorityNotesGVK{ $knownSelection{$sigel}{'authority'} }{$sigel}{ pica_value($titleRecord, '006Z0') } = \@titleWarningsGVK;
+        $authorityNotesGVK{ $knownSelection{$sigel}{'authority'} }{$sigel}{ $id } = \@titleWarningsGVK;
       }
+
       $titlesTotal++;
+
+      # -------------------- Collect IDs --------------------
+
       if(!$allIDs{$id}){
         $allIDs{$id} = {
             'title' => $titleInfo{'name'},
@@ -1760,7 +1790,8 @@ sub createJSON {
       }else{
         print "ID ".$id." mehrmals in Titelliste!\n";
       }
-    }
+    } ## End TitleInstance
+
     if($filter){
       say $out_pkg $json_pkg->pretty(1)->encode( \%alljson );
     }
@@ -1773,11 +1804,15 @@ sub createJSON {
       }
     }
     $packagesTotal++;
-  }
+  } ## End Package
+
+  # Write collected warnings to file
 
   say $out_warnings $json_warning->pretty(1)->encode( \%authorityNotes );
   say $out_warnings_zdb $json_warning_zdb->pretty(1)->encode( \%authorityNotesZDB );
   say $out_warnings_gvk $json_warning_gvk->pretty(1)->encode( \%authorityNotesGVK );
+
+  # Write collected titles to file
 
   if($filter){
     my $tfile = $titleDir->file("titles_$filter.json");
@@ -1786,7 +1821,11 @@ sub createJSON {
     say $out_titles $json_titles->pretty(1)->encode( \@allTitles );
     close($out_titles);
   }
+
+  # Submit collected titles to GOKb
+
   my $skippedTitles = 0;
+
   if($postData == 1){
     sleep 3;
     print "Submitting Titles to GOKb..\n";
@@ -1799,9 +1838,13 @@ sub createJSON {
       }
     }
   }
+
+  ## Final statistics
+
   my $timeElapsed = duration(time() - $startTime);
+
   print "\n**********************\n\n";
-  print "Runtime: $timeElapsed \n";
+  print "Runtime: $timeElapsed\n";
   print "$titlesTotal relevante Titel in $packagesTotal Paketen\n";
   print "$numNoUrl Titel ohne NL-URL\n";
   print "$duplicateISSNs ZDB-ID-Änderungen ohne ISSN-Anpassung\n";
@@ -1811,10 +1854,10 @@ sub createJSON {
   print "$pubFromAuthor als Verlag verwendete Autoren (021Ah)\n";
   print "$pubFromCorp als Verlag verwendete Primärkörperschaften (029Aa)\n";
   if($skippedPackages ne ""){
-    print "Wegen Fehler beim Upload übersprungene Pakete: $skippedPackages \n";
+    print "Wegen Fehler beim Upload übersprungene Pakete: $skippedPackages\n";
   }
   if($skippedTitles != 0){
-    print "Anzahl wegen Fehler beim Upload übersprungene Titel: $skippedTitles \n";
+    print "Anzahl wegen Fehler beim Upload übersprungene Titel: $skippedTitles\n";
   }
   print "\n**********************\n\n";
 }
@@ -1855,7 +1898,7 @@ sub postData {
   }
 }
 
-# ensure ISSN format;
+# ensure ISSN format
 
 sub formatISSN {
   my ($issn) = $_[0];
