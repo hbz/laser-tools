@@ -830,7 +830,7 @@ sub createJSON {
     my $noPublisher = 0;
     my %allISSN;
     my %allIDs;
-    my %alljson;
+    my %package;
 
     my $json_pkg = JSON->new->utf8->canonical;
     my $out_pkg;
@@ -866,7 +866,7 @@ sub createJSON {
     my $pkgYear = strftime '%Y', localtime;
     my $pkgPlatform = $knownSelection{$sigel}{'platformURL'} ? $knownSelection{$sigel}{'platformURL'} : "";
 
-    $alljson{'packageHeader'} = {
+    $package{'packageHeader'} = {
       name => "$provider: $pkgName: NL $pkgYear",
       # identifiers => { name => "ISIL", value => $sigel },
       additionalProperties => [],
@@ -895,7 +895,7 @@ sub createJSON {
       }],
     };
 
-    $alljson{'tipps'} = [];
+    $package{'tipps'} = [];
 
     my $qryString = 'pica.xpr='.$sigel;
     if($onlyJournals == 1){
@@ -1439,7 +1439,6 @@ sub createJSON {
           $subfPos++;
         }
         if($relatedID){
-
           my $isInList = $allIDs{$relatedID} ? "yes" : "no";
 
           if($relationType && $relationType ne ( 'Druckausg' || 'Druckausg.' )){
@@ -1754,7 +1753,7 @@ sub createJSON {
           push @{ $tipp{'title'}{'identifiers'} } , \%idPair;
         }
 
-        push @{ $alljson{'tipps'} } , \%tipp;
+        push @{ $package{'tipps'} } , \%tipp;
       } # End TIPP
 
       # -------------------- Compile warning files --------------------
@@ -1765,13 +1764,13 @@ sub createJSON {
         push @titleWarningsGVK , {'009P0'=> "ZDB-URLs != GVK-URLs?"};
       }
       if(scalar @titleWarnings > 0){
-        $authorityNotes{ $knownSelection{$sigel}{'authority'} }{$sigel}{ $id } = \@titleWarnings;
+        $authorityNotes{ $knownSelection{$sigel}{'authority'} }{$sigel}{$id} = \@titleWarnings;
       }
       if(scalar @titleWarningsZDB > 0){
-        $authorityNotesZDB{ $knownSelection{$sigel}{'authority'} }{$sigel}{ $id } = \@titleWarningsZDB;
+        $authorityNotesZDB{ $knownSelection{$sigel}{'authority'} }{$sigel}{$id} = \@titleWarningsZDB;
       }
       if(scalar @titleWarningsGVK > 0){
-        $authorityNotesGVK{ $knownSelection{$sigel}{'authority'} }{$sigel}{ $id } = \@titleWarningsGVK;
+        $authorityNotesGVK{ $knownSelection{$sigel}{'authority'} }{$sigel}{$id} = \@titleWarningsGVK;
       }
 
       $titlesTotal++;
@@ -1793,11 +1792,11 @@ sub createJSON {
     } ## End TitleInstance
 
     if($filter){
-      say $out_pkg $json_pkg->pretty(1)->encode( \%alljson );
+      say $out_pkg $json_pkg->pretty(1)->encode( \%package );
     }
     if($postData == 1){
       print "Submitting Package $sigel to GOKb..\n";
-      my $postResult = postData('crossReferencePackage', \%alljson);
+      my $postResult = postData('crossReferencePackage', \%package);
       if($postResult != 0){
         print "Could not Upload Package $sigel! Errorcode $postResult\n";
         $skippedPackages .= $sigel." ";
@@ -1918,7 +1917,7 @@ sub formatISSN {
 sub formatZdbId {
   my ($id) = $_[0];
 
-  if($id && $id =~ /^\d*-?[xX]?$/){
+  if($id && $id =~ /^\d*-?[0-9xX]?$/){
     $id =~ s/-//g;
     $id =~ s/x/X/g;
     substr($id, -1, 0, '-');
