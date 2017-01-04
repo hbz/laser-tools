@@ -5,14 +5,14 @@
 # 1. Import der Sigelinformationen aus dem Nationallizenzen-CMS (benötigt Login als Parameter)
 # 2. Anreicherung der Paketinformationen mit Daten aus dem ZDB-Sigelverzeichnis
 # 3. Extrahieren von Titelinformationen über die SRU-Schnittstelle des GBV
-# 4. Upload der Paket- und Titeldaten in eine GOKb-Instanz (nach Login wird gefragt)
+# 4. Upload der Paket- und Titeldaten in eine GOKb-Instanz
 #
 # Parameter:
 # --packages "data_source,username,password" <- erstellt die known_seals.json
-# --tsv (ZDB-1-...) <- alte Methode, known_seals.json muss vorhanden sein. Ohne folgendes Paketsigel werden alle Pakete bearbeitet.
 # --json (ZDB-1-...) <- neue Methode, known_seals.json muss vorhanden sein. Ohne folgendes Paketsigel werden alle Pakete bearbeitet.
 # --post (URL) <- Folgt keine URL, wird die localhost Standardadresse verwendet. Nur zulässig nach --json
 
+use v5.22;
 use strict;
 use warnings;
 use utf8;
@@ -20,6 +20,7 @@ use DBI;
 use JSON;
 use URI;
 use Unicode::Normalize;
+use IO::Tee;
 use Time::Duration;
 binmode(STDOUT, ":utf8");
 
@@ -49,6 +50,21 @@ use PICA::Data ':all';
 my $packageDir = dir("packages");
 my $titleDir = dir("titles");
 my $warningDir = dir("warnings");
+my $logDir = dir("logs");
+
+### logging
+
+my $logFnDate = strftime '%Y-%m-%d', localtime;
+my $logFn = 'logs_'.$logFnDate.'.log';
+$logDir->mkpath( { verbose => 0 } );
+my $logFile = $logDir->file($logFn);
+$logFile->touch();
+my $out_logs = $logFile->opena();
+
+my $tee = new IO::Tee(\*STDOUT, $out_logs);
+
+*STDERR = *$tee{IO};
+select $tee;
 
 ## Should the TitleList be verified by the uploading Account?
 
@@ -76,111 +92,114 @@ my $ncsu_orgs = do {
 };
 my %orgsJSON = %{decode_json($ncsu_orgs)} or die "Konnte JSON mit NCSU-Orgs nicht dekodieren! \n";
 
+# Check for login configuration
+
+my %cmsCreds;
+my %gokbCreds;
+
+if(-e 'login.json'){
+  my $login_data = do {
+    open(my $logins, '<' , "login.json")
+        or die("Can't open login.json: $!\n");
+    local $/;
+    <$logins>
+  };
+  my %logins = %{decode_json($login_data)} or die "Konnte JSON mit Logins nicht dekodieren! \n";
+  if($logins{'cms'}){
+    %cmsCreds = %{ $logins{'cms'} };
+  }
+  if($logins{'gokb'}){
+    %gokbCreds = %{ $logins{'gokb'} };
+  }
+}
+
 # Handle parameters
 
-my $gokbUser;
-my $gokbPw;
-
 my $argP = first_index { $_ eq '--packages' } @ARGV;
-my $argT = first_index { $_ eq '--tsv' } @ARGV;
 my $argJ = first_index { $_ eq '--json' } @ARGV;
 my $argPost = first_index { $_ eq '--post' } @ARGV;
 
 if($ARGV[$argPost+1] && index($ARGV[$argPost+1], "http") == 0){
-  $baseUrl = $ARGV[$argPost+1];
+  $gokbCreds{'base'} = $ARGV[$argPost+1];
+}
+if(!$gokbCreds{'base'}){
+  $gokbCreds{'base'} = "http://localhost:8080/gokb/";
 }
 
 if($argP >= 0){
   if(index($ARGV[$argP+1], "dbi") == 0){
     my @creds = split(",", $ARGV[$argP+1]);
     if(scalar @creds == 3){
-      if($argT >= 0){
-        if(getSeals($creds[0],$creds[1],$creds[2]) == 0){
-          if(index($ARGV[$argT+1], "ZDB") == 0){
-            createTSV($ARGV[$argT+1]);
-          }else{
-            print "Pakete abgerufen, erstelle TSVs!\n";
-            createTSV();
-          }
-        }else{
-          print "Erstelle keine TSVs, Sigeldatei wurde nicht erstellt!\n";
+      $cmsCreds{'base'} = $creds[0];
+      $cmsCreds{'username'} = $creds[1];
+      $cmsCreds{'password'} = $creds[2];
+    }else{
+        die "Falsches Format der DB-Daten! Abbruch!";
+    }
+  }
+  if(!$cmsCreds{'base'} || !$cmsCreds{'username'} || !$cmsCreds{'password'}){
+    die "Datenbankinformationen fehlen/falsch! Format ist: \"data_source,username,password\"";
+  }
+  if($argJ >= 0){
+    if(getSeals($cmsCreds{'base'},$cmsCreds{'username'},$cmsCreds{'password'}) == 0){
+      my $post = 0;
+      if($argPost >= 0){
+        if(!$gokbCreds{'username'} || !$gokbCreds{'password'}){
+          say STDOUT "GOKb-Benutzername:";
+          $gokbCreds{'username'} = <STDIN>;
+          say STDOUT "GOKb-Passwort:";
+          ReadMode 2;
+          $gokbCreds{'password'} = <STDIN>;
+          ReadMode 0;
         }
-      }elsif($argJ >= 0){
-        if(getSeals($creds[0],$creds[1],$creds[2]) == 0){
-          my $post = 0;
-          if($argPost >= 0){
-            print "GOKb-Benutzername:\n";
-            $gokbUser = <STDIN>;
-            print "GOKb-Passwort:\n";
-            ReadMode 2;
-            $gokbPw = <STDIN>;
-            ReadMode 0;
-            if($gokbUser && $gokbPw){
-              $post = 1;
-            }else{
-              print "Kein Benutzername/Passwort eingegeben, überspringe GOKb-Import!\n";
-            }
-          }
-          if(index($ARGV[$argJ+1], "ZDB") == 0){
-            createJSON($post, $ARGV[$argJ+1]);
-          }else{
-            print "Pakete abgerufen, erstelle JSONs!\n";
-            createJSON($post);
-          }
+        if($gokbCreds{'username'} && $gokbCreds{'password'}){
+          $post = 1;
         }else{
-          print "Erstelle keine JSONs, Sigeldatei wurde nicht erstellt!\n";
+          say "Kein Benutzername/Passwort, überspringe GOKb-Import!";
         }
+      }
+      if(index($ARGV[$argJ+1], "ZDB") == 0){
+        createJSON($post, $ARGV[$argJ+1]);
       }else{
-          print "Erstelle nur Paketdatei!\n";
-          getSeals($creds[0],$creds[1],$creds[2]);
+        say "Pakete abgerufen, erstelle JSONs!";
+        createJSON($post);
       }
     }else{
-        print "Falsches Format der DB-Daten! Abbruch!\n";
+      die "Erstelle keine JSONs, Sigeldatei wurde nicht erstellt!";
     }
   }else{
-      print "Datenbankinformationen fehlen/falsch! Format ist: \"data_source,username,password\"\n";
-  }
-}elsif($argT >= 0){
-  if(-e $knownSeals){
-    if($ARGV[$argT+1] && index($ARGV[$argT+1], "ZDB") == 0){
-      my $filterSigel = $ARGV[$argT+1];
-      print "Paketdatei gefunden, erstelle TSV für $filterSigel!\n";
-      createTSV($filterSigel);
-    }else{
-      print "Paketdatei gefunden, erstelle TSVs!\n";
-      createTSV();
-    }
-  }else{
-    print "Paketdatei nicht vorhanden! Zum Erstellen mit Parameter '--packages' starten!\n";
+      say "Erstelle nur Paketdatei!";
+      getSeals($cmsCreds{'base'},$cmsCreds{'username'},$cmsCreds{'password'});
   }
 }elsif($argJ >= 0){
   if(-e $knownSeals){
     my $post = 0;
     if($argPost >= 0){
-      print "GOKb-Benutzername:\n";
-      $gokbUser = <STDIN>;
-      chomp $gokbUser;
-      ReadMode 2;
-      print "GOKb-Passwort:\n";
-      $gokbPw = <STDIN>;
-      ReadMode 0;
-      chomp $gokbPw;
-      if($gokbUser && $gokbPw){
+      if(!$gokbCreds{'username'} || !$gokbCreds{'password'}){
+        say STDOUT "GOKb-Benutzername:";
+        $gokbCreds{'username'} = <STDIN>;
+        say STDOUT "GOKb-Passwort:";
+        ReadMode 2;
+        $gokbCreds{'password'} = <STDIN>;
+        ReadMode 0;
+        chomp $gokbCreds{'password'};
+      }
+      if($gokbCreds{'username'} && $gokbCreds{'password'}){
         $post = 1;
       }else{
-        print "Kein Benutzername/Passwort eingegeben, überspringe GOKb-Import!\n";
+        say "Kein Benutzername/Passwort, überspringe GOKb-Import!";
       }
     }
     if($ARGV[$argJ+1] && index($ARGV[$argJ+1], "ZDB") == 0){
       my $filterSigel = $ARGV[$argJ+1];
-      print "Paketdatei gefunden, erstelle JSON für $filterSigel!\n";
+      say "Paketdatei gefunden, erstelle JSON für $filterSigel!";
       createJSON($post, $filterSigel);
     }else{
-      print "Paketdatei gefunden, erstelle JSONs!\n";
+      say "Paketdatei gefunden, erstelle JSONs!";
       createJSON($post);
     }
   }else{
-    print "Paketdatei nicht vorhanden! Zum Erstellen mit Parameter '--packages' starten!\n";
+    say "Paketdatei nicht vorhanden! Zum Erstellen mit Parameter '--packages \"data_source,username,password\"' starten!";
   }
 }
 
@@ -188,34 +207,11 @@ if($argP >= 0){
 
 if(scalar @ARGV == 0){
 
-  print "Mögliche Parameter sind '--packages', sowie '--json' (aktuell) oder '--tsv' (alte Methode). Falls beide vorhanden sind, werden sie in dieser Reihenfolge bearbeitet.\n";
-  print "Wechsel zu interaktivem Modus..\n";
-  print "Bitte Aufgabe eingeben (1: Aktuelle Sigel abrufen; 2: JSON vorhanden, nur TSV erstellen; 3: Neue JSON-Methode verwenden; 4: Paket-JSON erstellen und zur GOKb hochladen):\n";
-  my $selected = <>;
-
-  if($selected == 1){
-    getSeals();
-  }elsif($selected == 2){
-    createTSV();
-  }elsif($selected == 3){
-    createJSON(0);
-  }elsif($selected == 4){
-    print "GOKb-Benutzername:\n";
-    $gokbUser = <STDIN>;
-    chomp $gokbUser;
-    ReadMode 2;
-    print "GOKb-Passwort:\n";
-    $gokbPw = <STDIN>;
-    ReadMode 0;
-    chomp $gokbPw;
-    if($gokbUser && $gokbPw){
-      createJSON(1);
-    }else{
-      print "Kein Benutzername/Passwort eingegeben, beende Programm!\n";
-    }
-  }else{
-    print "Keine valide Option gewählt. Beende Programm!\n";
-  }
+  say STDOUT "Keine Parameter gefunden!";
+  say STDOUT "Mögliche Parameter sind:";
+  say STDOUT "'--packages \"data_source,username,password\"'";
+  say STDOUT "'--json [\"Sigel\"]'";
+  say STDOUT "'--post [\"URL\"]'";
 }
 
 # Query Sigelverzeichnis via SRU for package metadata
@@ -402,324 +398,6 @@ sub getSeals {
   return 0;
 }
 
-# Create title lists from package metadata
-# !OLD method, now using createJSON() -- may not function properly any more
-
-sub createTSV {
-  my $filter = $_[0];
-  my $json_text = do {
-    open(my $json_fh, '<' , $knownSeals)
-        or die("Can't open \$filename\": $!\n");
-    local $/;
-    <$json_fh>
-  };
-  my $titlesTotal = 0;
-  my $packagesTotal = 0;
-  my $json = JSON->new;
-  my %known = %{decode_json($json_text)} or die "JSON nicht vorhanden! \n";
-  my %knownSelection;
-  if($filter){
-    $knownSelection{$filter} = $known{$filter};
-    print "Creating title list for $filter!\n";
-  }else{
-    %knownSelection = %known;
-    print "Creating title lists for all packages!\n"
-  }
-  foreach my $sigel (keys %knownSelection){
-    my @previousIDs;
-    my @tableColumns  = (
-      "publication_title",
-      "print_identifier",
-      "online_identifier",
-      "date_first_issue_online",
-      "num_first_vol_online",
-      "num_first_issue_online",
-      "date_last_issue_online",
-      "num_last_vol_online",
-      "num_last_issue_online",
-      "title_url",
-      "first_author",
-      "title_id",
-      "embargo_info",
-      "coverage_depth",
-      "coverage_notes",
-      "publisher_name",
-      "preceding_publication_title_id",
-      "parent_publication_title_id"
-    );
-    my $currentTitle = 0;
-    print "Processing Package ".$sigel."...\n";
-    if(scalar @{ $known{$sigel}{'zdbOrgs'} } == 0){
-      print "Paket hat keine verknüpften Institutionen in der ZBD. Überspringe Paket.\n";
-      next;
-    }
-    my $ts = strftime "%Y%m%d", localtime;
-    my $tsvFile = $packageDir->file($sigel.".tsv");
-    if (-e $tsvFile) {
-      copy($tsvFile, $packageDir->file($sigel.'_last.tsv'));
-      open(my $fh, '>:encoding(UTF-8)', $tsvFile) or die "Could not open file '$tsvFile' $!";
-      close($fh);
-    }
-    my %attrs = (
-      base => 'http://sru.gbv.de/gvk',
-      query => 'pica.xpr='.$sigel.' sortBy year/sort.ascending',
-      recordSchema => 'picaxml',
-      parser => 'picaxml'
-    );
-    writeLine($sigel, \@tableColumns);
-    my $noPublisher = 0;
-    my $importer = Catmandu::Importer::SRU->new(%attrs) or die "Abfrage über ".$attrs{'base'}." fehlgeschlagen!\n";
-
-    while (my $titleRecord = $importer->next){
-      $currentTitle++;
-
-      # Check, if the package correctly contains journals only
-
-      if(substr(pica_value($titleRecord, '002@0'), 0, 2) ne 'Ob' && $currentTitle <= 2){
-        print "Überspringe Paket ".$sigel.": Nicht-Zeitschrift in den ersten 2 Treffern: ".pica_value($titleRecord, '002@0')."\n";
-        unlink $tsvFile or warn "Konnte Titelliste für ".$sigel." nicht löschen!\n";
-        last;
-      }elsif(substr(pica_value($titleRecord, '002@0'), 0, 2) ne 'Ob'){
-        print "Überspringe Titel ".pica_value($titleRecord, '021Aa').", Materialcode: ".pica_value($titleRecord, '002@0')."\n";
-        next;
-      }
-
-      # Collect date fragments for processing
-      my $start_year = 0;
-      if(pica_value($titleRecord, '031Nj')){
-        $start_year = pica_value($titleRecord, '031Nj');
-      }elsif(pica_value($titleRecord, '011@a')){
-        $start_year = pica_value($titleRecord, '011@a');
-      }
-      my $end_year = 0;
-      if(pica_value($titleRecord, '031Nk')){
-        $end_year = pica_value($titleRecord, '031Nk');
-      }elsif(pica_value($titleRecord, '011@b')){
-        $end_year = pica_value($titleRecord, '011@b');
-      }
-
-      my @dates = (
-        $start_year,
-        pica_value($titleRecord, '031Nc') ? pica_value($titleRecord, '031Nc') : 0,
-        pica_value($titleRecord, '031Nb') ? pica_value($titleRecord, '031Nb') : 0,
-        $end_year,
-        pica_value($titleRecord, '031Nm') ? pica_value($titleRecord, '031Nm') : 0,
-        pica_value($titleRecord, '031Nl') ? pica_value($titleRecord, '031Nl') : 0
-      );
-
-      my @dts = transformDate(\@dates);
-
-      # Prepare KBART fields
-
-      my $title = "";
-      my $issn = "";
-      my $eissn = formatISSN(pica_value($titleRecord, '005A0'));
-      my $fromTime = $dts[0][0];
-      my $firstVol = pica_value($titleRecord, '031Nd') ? pica_value($titleRecord, '031Nd') : "";
-      my $firstIssue = pica_value($titleRecord, '031Ne') ? pica_value($titleRecord, '031Ne') : "";
-      my $toTime = $dts[0][1];
-      my $lastVol = pica_value($titleRecord, '031Nn') ? pica_value($titleRecord, '031Nn') : "";
-      my $lastIssue = pica_value($titleRecord, '031No') ? pica_value($titleRecord, '031No') : "";
-      my $id = "";
-      my $url = "";
-      my $embargo = "";
-      my $publisher = "";
-      my $author = "";
-      my $coverage_depth = "";
-      my $coverage_notes = "";
-      my $preceding_id = "";
-      my $parent_id = "";
-
-      # Format ISSN(s)
-
-#       if(pica_value($titleRecord, '005P0')){
-#         my $unformatedIssn = pica_value($titleRecord, '005P0');
-#         if(index($unformatedIssn, '-') eq '-1'){
-#           $issn = join('-', unpack('a4 a4', $unformatedIssn));
-#         }
-#       }
-
-      if(pica_value($titleRecord, '005A0')){
-        my $unformatedIssn = pica_value($titleRecord, '005A0');
-        if(index($unformatedIssn, '-') eq '-1'){
-          $eissn = join('-', unpack('a4 a4', $unformatedIssn));
-          $eissn =~ s/x/X/g;
-        }
-      }
-
-      # Preceeding Title
-
-      my @relatedIDs = pica_values($titleRecord, '039E6');
-      my $relIDsNum = (scalar @relatedIDs)/2;
-
-      my @relatedComments = pica_values($titleRecord, '039Ec');
-
-      my $relComNum = scalar @relatedComments;
-      my $relPos = 0;
-      if($relIDsNum == $relComNum){
-        foreach my $relatedComment (@relatedComments){
-          $relatedIDs[$relPos*2] =~ s/-//g;
-          $relatedIDs[$relPos*2] =~ s/x/X/g;
-          if(index($relatedComment, "Vorg.") == 0 || $relatedComment eq "Darin aufgeg." || $relatedComment eq "Fortsetzung von"){
-            $preceding_id = $relatedIDs[$relPos*2];
-          }
-          $relPos++;
-        }
-      }
-
-      # Get correct URL
-
-      my @sourcePlatforms = pica_values($titleRecord, '009P[05]x');
-      my @sourceURLS = pica_values($titleRecord, '009P[05]a');
-      my $sourcePos = 0;
-      foreach my $platform (@sourcePlatforms){
-        if($platform eq 'Verlag' && length($sourceURLS[$sourcePos]) <= 255){
-          $url = $sourceURLS[$sourcePos];
-        }
-        $sourcePos++;
-      }
-
-      ## Fallback 1: Check for any continuing publisher sources
-
-      $sourcePos = 0;
-      my %possibleSources;
-      if($url eq ""){
-        foreach my $platform (@sourcePlatforms){
-          if(length($sourceURLS[$sourcePos]) <= 255){
-            if(index($platform, 'Verlag') == 0 && substr($platform, -1) eq '-'){
-              $platform = substr($platform, 0, (length $platform)-1);
-              if(substr($platform, -2) eq ' '){
-                substr($platform, -2, 2, "");
-              }
-              if(rindex($platform, ',') <= 5){
-                my $cPos = rindex($platform, ',');
-                $platform = substr($platform, 0, $cPos);
-              }
-              if(looks_like_number(substr($platform, -4, 4))){
-                $possibleSources{$sourcePos} = substr($platform, -4, 4);
-              }elsif(looks_like_number(substr($platform, -7, 4))){
-                $possibleSources{$sourcePos} = substr($platform, -7, 4);
-              }
-            }
-          }
-          $sourcePos++;
-        }
-        if(scalar keys %possibleSources > 0){
-          my @sortedSources = sort { $possibleSources{$a} <=> $possibleSources{$b} } keys %possibleSources;
-          if(%possibleSources){
-            $url = $sourceURLS[$sortedSources[0]];
-          }
-        }
-      }
-
-      ## Fallback 2: Check for other publisher sources
-
-      $sourcePos = 0;
-      if($url eq ""){
-        foreach my $platform (@sourcePlatforms){
-          if(index($platform, 'Verlag') >= 0){
-            if(length($sourceURLS[$sourcePos]) <= 255){
-              $url = $sourceURLS[$sourcePos];
-            }
-          }
-          $sourcePos++;
-        }
-      }
-
-      ## Fallback 3: Check for digitalisation sources
-
-      $sourcePos = 0;
-      if($url eq ""){
-        foreach my $platform (@sourcePlatforms){
-          if($platform eq 'Digitalisierung'){
-            if(length($sourceURLS[$sourcePos]) <= 255){
-              $url = $sourceURLS[$sourcePos];
-            }
-          }
-          $sourcePos++;
-        }
-      }
-      ## Fallback 4: Select EZB source
-
-      $sourcePos = 0;
-      if($url eq ""){
-        foreach my $platform (@sourcePlatforms){
-          if(index($platform, 'EZB') == 0){
-            $url = $sourceURLS[$sourcePos];
-          }
-          $sourcePos++;
-        }
-      }
-
-      # Title (publication_title)
-
-      if(pica_value($titleRecord, '025@a')){
-        my $titleField = pica_value($titleRecord, '025@a');
-        if(index($titleField, '@') <= 5){
-          $titleField =~ s/@//;
-        }
-        $title = $titleField;
-      }elsif(pica_value($titleRecord, '021Aa')){
-        my $titleField = pica_value($titleRecord, '021Aa');
-        if(index($titleField, '@') <= 5){
-          $titleField =~ s/@//;
-        }
-        $title = $titleField;
-      }
-
-      # Publisher
-
-      if(pica_value($titleRecord, '033An')){
-        $publisher = pica_value($titleRecord, '033An');
-      }
-
-      # ZDB-ID
-
-      my @zdbIDs = pica_values($titleRecord, '006Z0');
-      foreach my $zdbID (@zdbIDs){
-        $zdbID =~ s/-//g;
-        if($zdbID =~ /^\d*[xX]?$/){
-          $zdbID =~ s/x/X/g;
-          $id = $zdbID;
-        }
-      }
-
-      # Finished table row
-
-      my @titleRow = (
-          $title,
-          $issn,
-          $eissn,
-          $fromTime,
-          $firstVol,
-          $firstIssue,
-          $toTime,
-          $lastVol,
-          $lastIssue,
-          $url,
-          $author,
-          $id,
-          $embargo,
-          $coverage_depth,
-          $coverage_notes,
-          $publisher,
-          $preceding_id,
-          $parent_id
-      );
-#       if($id ~~ @previousIDs){
-#         print "Titel mit ZDB-ID $id wurde bereits geschrieben!\n";
-#       }else{
-        print "Schreibe Titel ".$currentTitle." von Paket ".$sigel." (".$title.")\n";
-        writeLine($sigel, \@titleRow);
-        $titlesTotal++;
-#       }
-#       push @previousIDs, $id;
-    }
-  };
-  print $packagesTotal." Pakete mit ".$titlesTotal." Zeitschriftentiteln verarbeitet.\n";
-  return 0;
-}
-
 # Create packages, tipps and titles as GOKb-JSON (and trigger upload if requested)
 
 sub createJSON {
@@ -733,6 +411,23 @@ sub createJSON {
     local $/;
     <$json_fh>
   };
+
+  # Input JSON handling
+
+  my %known = %{decode_json($json_seals)} or die "JSON nicht vorhanden!\n";
+  my %knownSelection;
+  if($filter){
+    if($known{$filter}){
+      $knownSelection{$filter} = $known{$filter};
+      say "Generating JSON only for $filter!";
+    }else{
+      say "Paket nicht bekannt!";
+      return -1;
+    }
+  }else{
+    %knownSelection = %known;
+    say "Generating JSON for all packages!";
+  }
 
   $packageDir->mkpath( { verbose => 0 } );
   $titleDir->mkpath( { verbose => 0 } );
@@ -802,18 +497,6 @@ sub createJSON {
   my $json_warning_gvk = JSON->new->utf8->canonical;
   my $json_titles = JSON->new->utf8->canonical;
 
-  # Input JSON handling
-
-  my %known = %{decode_json($json_seals)} or die "JSON nicht vorhanden! \n";
-  my %knownSelection;
-  if($filter){
-    $knownSelection{$filter} = $known{$filter};
-    print "Generating JSON only for $filter!\n";
-  }else{
-    %knownSelection = %known;
-    print "Generating JSON for all packages!\n";
-  }
-
   # Start timer
 
   my $startTime = time();
@@ -844,9 +527,9 @@ sub createJSON {
       $out_pkg = $pfile->openw();
     }
 
-    print "Processing Package ".($packagesTotal + 1).", ".$sigel."...\n";
+    say "Processing Package ".($packagesTotal + 1).", ".$sigel."...";
     if($onlyJournals == 1 && scalar @{ $knownSelection{$sigel}{'zdbOrgs'} } == 0){
-      print "Paket hat keine verknüpften Institutionen in der ZBD. Überspringe Paket.\n";
+      say "Paket hat keine verknüpften Institutionen in der ZBD. Überspringe Paket.";
       next;
     }
 
@@ -855,8 +538,8 @@ sub createJSON {
     my $userListVer = "";
     my $listVerDate = "";
 
-    if($verifyTitleList != 0 && $gokbUser){
-      $userListVer = $gokbUser;
+    if($verifyTitleList != 0 && $gokbCreds{'username'}){
+      $userListVer = $gokbCreds{'username'};
       $listVerDate = convertToTimeStamp(strftime('%Y-%m-%d', localtime));
     }
 
@@ -947,19 +630,6 @@ sub createJSON {
         $gokbMedium = "";
       }
 
-      # Check, if the title is a journal
-      # (shouldn't be necessary since it should be included in the search query)
-
-      if($onlyJournals == 1 && substr($materialType, 0, 2) ne 'Ob'){
-        print "Überspringe Titel ".pica_value($titleRecord, '021Aa').", Materialcode: ".$materialType."\n";
-        next;
-      }
-      if(pica_value($titleRecord, '006Z0')){
-        print "Verarbeite Titel ".$currentTitle." von Paket ".$sigel."(".pica_value($titleRecord, '006Z0').")\n";
-      }else{
-        print "Verarbeite Titel ".$currentTitle." von Paket ".$sigel."(".$ppn.")\n";
-      }
-
       # -------------------- Identifiers --------------------
 
       $titleInfo{'identifiers'} = [];
@@ -1003,7 +673,7 @@ sub createJSON {
           my $eissn = formatISSN(pica_value($titleRecord, '005A0'));
 
           if($eissn eq ""){
-            print "ISSN scheint ungültig zu sein!\n";
+            say "ISSN ".pica_value($titleRecord, '005A0')." in Titel $id scheint ungültig zu sein!";
             push @titleWarnings, {
               '005A0' => $eissn
             };
@@ -1011,7 +681,7 @@ sub createJSON {
               '005A0' => $eissn
             };
           }elsif($allISSN{$eissn} || ( $globalIDs{$id} && $globalIDs{$id}{'eissn'} ne $eissn ) ){
-            print "ISSN wurde bereits vergeben!\n";
+            say "eISSN $eissn in Titel $id wurde bereits vergeben!";
             $duplicateISSNs++;
             push @titleWarnings, {
               '005A0' => $eissn,
@@ -1035,7 +705,7 @@ sub createJSON {
         if(pica_value($titleRecord, '005P0')){
           my $pissn = formatISSN(pica_value($titleRecord, '005P0'));
           if($pissn eq ""){
-            print "Parallel-ISSN scheint ungültig zu sein!\n";
+            say "Parallel-ISSN ".pica_value($titleRecord, '005P0')." in Titel $id scheint ungültig zu sein!";
             push @titleWarnings, {
               '005A0' => $pissn
             };
@@ -1043,7 +713,7 @@ sub createJSON {
               '005A0' => $pissn
             };
           }elsif($allISSN{$pissn}){
-            print "Parallel-ISSN wurde bereits als eISSN vergeben!\n";
+            say "Parallel-ISSN $pissn in Titel $id wurde bereits als eISSN vergeben!";
             $wrongISSN++;
             push @titleWarnings, {
               '005P0' => $pissn,
@@ -1075,6 +745,19 @@ sub createJSON {
 #         }
 #       }
 
+      # Check, if the title is a journal
+      # (shouldn't be necessary since it should be included in the search query)
+
+      if($onlyJournals == 1 && substr($materialType, 0, 2) ne 'Ob'){
+        say "Überspringe Titel ".pica_value($titleRecord, '021Aa').", Materialcode: ".$materialType;
+        next;
+      }
+      if(pica_value($titleRecord, '006Z0')){
+        say STDOUT "Verarbeite Titel ".$currentTitle." von Paket ".$sigel."(".$id.")";
+      }else{
+        say STDOUT "Verarbeite Titel ".$currentTitle." von Paket ".$sigel."(".$ppn.")";
+      }
+
       # -------------------- Title --------------------
 
       if(pica_value($titleRecord, '025@a')){
@@ -1092,7 +775,7 @@ sub createJSON {
         $titleInfo{'name'} = $titleField;
         
       }else{
-        print "Keinen Titel für ".$ppn." erkannt, überspringe Titel!\n";
+        say "Keinen Titel für ".$ppn." erkannt, überspringe Titel!";
         push @titleWarnings, { '021Aa' => pica_value($titleRecord, '021Aa') };
         push @titleWarningsZDB, { '021Aa' => pica_value($titleRecord, '021Aa') };
         next;
@@ -1549,7 +1232,8 @@ sub createJSON {
                 };
               }
             }else{
-              print "Konnte keinen direkten Vorgänger bzw. Nachfolger ausmachen für Daten $start_year-".($end_year != 0 ? $end_year : "")." und $relatedStartYear-".($relatedEndYear ? $relatedEndYear : "")."\n";
+              say "Konnte keinen direkten Vorgänger bzw. Nachfolger in $id ausmachen: ";
+              say "$start_year-".($end_year != 0 ? $end_year : "")." und $relatedStartYear-".($relatedEndYear ? $relatedEndYear : "");
             }
           }
         }
@@ -1594,7 +1278,7 @@ sub createJSON {
         }
 
         if(!$sourceURL || length $sourceURL > 255 || $sourceURL eq ""){
-          print "Skipping TIPP with overlong URL!\n";
+          say "Skipping TIPP in $id with overlong URL!";
           next;
         }
         if($publicComments ne "Deutschlandweit zugänglich"){
@@ -1621,7 +1305,7 @@ sub createJSON {
             next;
           }
         }else{
-          print "Looks like a wrong URL >".$id."\n";
+          say "Looks like a wrong URL >".$id;
           push @titleWarnings , {'009P0'=> $sourceURL};
           push @titleWarningsZDB , {'009P0'=> $sourceURL};
           next;
@@ -1787,7 +1471,7 @@ sub createJSON {
         }
         push @allTitles , \%titleInfo;
       }else{
-        print "ID ".$id." mehrmals in Titelliste!\n";
+        say "ID ".$id." ist bereits in der Titelliste vorhanden!";
       }
     } ## End TitleInstance
 
@@ -1795,14 +1479,15 @@ sub createJSON {
       say $out_pkg $json_pkg->pretty(1)->encode( \%package );
     }
     if($postData == 1){
-      print "Submitting Package $sigel to GOKb..\n";
+      say "Submitting Package $sigel to GOKb (".$gokbCreds{'base'}.")";
       my $postResult = postData('crossReferencePackage', \%package);
       if($postResult != 0){
-        print "Could not Upload Package $sigel! Errorcode $postResult\n";
+        say "Could not Upload Package $sigel! Errorcode $postResult";
         $skippedPackages .= $sigel." ";
       }
     }
     $packagesTotal++;
+    say "Finished processing $currentTitle Titles of package $sigel.";
   } ## End Package
 
   # Write collected warnings to file
@@ -1827,12 +1512,12 @@ sub createJSON {
 
   if($postData == 1){
     sleep 3;
-    print "Submitting Titles to GOKb..\n";
+    say "Submitting Titles to GOKb (".$gokbCreds{'base'}.")";
     foreach my $title (@allTitles){
       my %curTitle = %{ $title };
       my $postResult = postData('crossReferenceTitle', \%curTitle);
       if($postResult != 0){
-        print "Could not upload Title! Errorcode $postResult\n";
+        say "Could not upload Title! Errorcode $postResult";
         $skippedTitles++;
       }
     }
@@ -1842,23 +1527,23 @@ sub createJSON {
 
   my $timeElapsed = duration(time() - $startTime);
 
-  print "\n**********************\n\n";
-  print "Runtime: $timeElapsed\n";
-  print "$titlesTotal relevante Titel in $packagesTotal Paketen\n";
-  print "$numNoUrl Titel ohne NL-URL\n";
-  print "$duplicateISSNs ZDB-ID-Änderungen ohne ISSN-Anpassung\n";
-  print "$wrongISSN eISSNs als Parallel-ISSN (005P0)\n";
-  print "$noPubGiven Titel ohne Verlag (033An)\n";
-  print "$noPubMatch Verlagsfelder mit der GOKb unbekanntem Verlagsnamen (033An)\n";
-  print "$pubFromAuthor als Verlag verwendete Autoren (021Ah)\n";
-  print "$pubFromCorp als Verlag verwendete Primärkörperschaften (029Aa)\n";
+  say "\n**********************\n";
+  say "Runtime: $timeElapsed";
+  say "$titlesTotal relevante Titel in $packagesTotal Paketen";
+  say "$numNoUrl Titel ohne NL-URL";
+  say "$duplicateISSNs ZDB-ID-Änderungen ohne ISSN-Anpassung";
+  say "$wrongISSN eISSNs als Parallel-ISSN (005P0)";
+  say "$noPubGiven Titel ohne Verlag (033An)";
+  say "$noPubMatch Verlagsfelder mit der GOKb unbekanntem Verlagsnamen (033An)";
+  say "$pubFromAuthor als Verlag verwendete Autoren (021Ah)";
+  say "$pubFromCorp als Verlag verwendete Primärkörperschaften (029Aa)";
   if($skippedPackages ne ""){
-    print "Wegen Fehler beim Upload übersprungene Pakete: $skippedPackages\n";
+    say "Wegen Fehler beim Upload übersprungene Pakete: $skippedPackages";
   }
   if($skippedTitles != 0){
-    print "Anzahl wegen Fehler beim Upload übersprungene Titel: $skippedTitles\n";
+    say "Anzahl wegen Fehler beim Upload übersprungene Titel: $skippedTitles";
   }
-  print "\n**********************\n\n";
+  say "\n**********************\n";
 }
 
 # Submit package/title JSON to GOKb-API
@@ -1866,7 +1551,7 @@ sub createJSON {
 sub postData {
   my $endPointType = $_[0];
   my $data = $_[1];
-  my $endPoint = $baseUrl."integration/".$endPointType;
+  my $endPoint = $gokbCreds{'base'}."integration/".$endPointType;
   
   if($data && ref($data) eq 'HASH'){
   
@@ -1876,23 +1561,23 @@ sub postData {
     $ua->timeout(1800);
     my $req = HTTP::Request->new(POST => $endPoint);
     $req->header('content-type' => 'application/json');
-    $req->authorization_basic($gokbUser, $gokbPw);
+    $req->authorization_basic($gokbCreds{'username'}, $gokbCreds{'password'});
     $req->content($json_gokb->encode( \%decData ));
     
     my $resp = $ua->request($req);
     if($resp->is_success){
       if($endPointType eq 'crossReferencePackage'){
-        print "Commit of package successful.\n";
+        say "Commit of package successful.";
       }
       return 0;
       
     }else{
-      print "HTTP POST error code: ", $resp->code, "\n";
-      print "HTTP POST error message: ", $resp->message, "\n";
+      say "HTTP POST error code: ", $resp->code;
+      say "HTTP POST error message: ", $resp->message;
       return $resp->code;
     }
   }else{
-    print "Wrong endpoint or no data!\n";
+    say "Wrong endpoint or no data!";
     return -1;
   }
 }
@@ -1976,26 +1661,6 @@ sub normalizeString {
   }
   $normString =~ s/\s//g;
   return $normString;
-}
-
-# Write title to TSV
-
-sub writeLine {
-  my $tsvSigel = $_[0];
-  my $i = 0;
-  my @columns = $_[1];
-  my $file = $packageDir->file($tsvSigel.".tsv");
-  $file->touch();
-  my $fh = $file->opena();
-  foreach my $column (@{$columns[0]}){
-    $i++;
-    print $fh $column;
-    if($i < scalar @{$columns[0]}){
-      print $fh "\t";
-    }
-  }
-  print $fh "\n";
-  close($fh);
 }
 
 # Convert Date(part) to Timestamp
