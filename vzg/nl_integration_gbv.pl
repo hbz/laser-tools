@@ -239,19 +239,25 @@ sub getZdbName {
       recordSchema => 'PicaPlus-xml',
       parser => 'ppxml'
   );
-  my $importer = Catmandu::Importer::SRU->new(%attrs) or die " - Abfrage über ".$attrs{'base'}." fehlgeschlagen!\n";
+  my $importer = Catmandu::Importer::SRU->new(%attrs)
+    or die " - Abfrage über ".$attrs{'base'}." fehlgeschlagen!\n";
 
   $importer->each(
     sub {
       my $packageInstance = shift;
 
-      if(pica_value($packageInstance, '035Ea') ne 'I' && pica_value($packageInstance, '008Hd') eq $sig){
+      if(pica_value($packageInstance, '035Ea') ne 'I'
+        && pica_value($packageInstance, '008Hd') eq $sig
+      ){
         my $messyName = pica_value($packageInstance, '029Aa');
         my $bracketPos = index($messyName, '[');
         $name = substr($messyName, 0, $bracketPos-1);
         $name =~ s/^\s+|\s+$//g;
 
-        $provider = pica_value($packageInstance, '035Pg') ? pica_value($packageInstance, '035Pg') : "";
+        $provider = pica_value($packageInstance, '035Pg')
+          ? pica_value($packageInstance, '035Pg')
+          : "";
+
         if(index($provider, ";") >= 0){
           ($provider, $platform) = split(";",$provider);
           $provider =~ s/^\s+|\s+$//g;
@@ -260,10 +266,14 @@ sub getZdbName {
         if(index($provider, "(") >= 0){
           $provider = substr($provider, 0, index($provider, "(")-1);
         }
-        $authority = pica_value($packageInstance, '032Pa') ? pica_value($packageInstance, '032Pa') : "";
+        $authority = pica_value($packageInstance, '032Pa')
+          ? pica_value($packageInstance, '032Pa')
+          : "";
       }else{
         print strftime '%Y-%m-%d %H:%M:%S', localtime;
-        print " - Überspringe Eintrag für ".$sig.": 035Ea: ".pica_value($packageInstance, '035Ea')." - 008Hd: ".pica_value($packageInstance, '008Hd')." \n";
+        print " - Überspringe Eintrag für ".$sig;
+        print ": 035Ea: ".pica_value($packageInstance, '035Ea');
+        print " - 008Hd: ".pica_value($packageInstance, '008Hd')." \n";
       }
     }
   );
@@ -1013,9 +1023,15 @@ sub createJSON {
 
             if($subField eq 'n'){
               if($tempPub){
-                push @titleWarnings, { '033A' => \@pub };
-                push @titleWarningsZDB, { '033A' => \@pub };
-                push @titleWarningsGVK, { '033A' => \@pub };
+                push @titleWarnings, {
+                  '033A' => \@pub
+                };
+                push @titleWarningsZDB, {
+                  '033A' => \@pub
+                };
+                push @titleWarningsGVK, {
+                  '033A' => \@pub
+                };
               }
               $preCorrectedPub = $pub[$subfPos+1];
               $tempPub = $pub[$subfPos+1];
@@ -1023,8 +1039,12 @@ sub createJSON {
             if($subField eq 'h'){
 
               if( $pub[$subfPos+1] =~ /[a-zA-Z\.,\(\)]+/ ) {
-                push @titleWarnings, { '033Ah' => $pub[$subfPos+1] };
-                push @titleWarningsZDB, { '033Ah' => $pub[$subfPos+1] };
+                push @titleWarnings, {
+                  '033Ah' => $pub[$subfPos+1]
+                };
+                push @titleWarningsZDB, {
+                  '033Ah' => $pub[$subfPos+1]
+                };
               }
               my ($tempStart) =
                 $pub[$subfPos+1] =~ /([0-9]{4})\/?[0-9]{0,2}\s?-/;
@@ -1092,8 +1112,12 @@ sub createJSON {
             || $tempPub =~ /u\.\s?a\./
           ){
             $noPubMatch++;
-            push @titleWarnings, { '033An' => $preCorrectedPub };
-            push @titleWarningsZDB, { '033An' => $preCorrectedPub };
+            push @titleWarnings, {
+              '033An' => $preCorrectedPub
+            };
+            push @titleWarningsZDB, {
+              '033An' => $preCorrectedPub
+            };
           }
         }
       }
@@ -1191,8 +1215,12 @@ sub createJSON {
             if($subField eq 'f'){
               $relatedDates = $relTitle[$subfPos+1];
               unless($relatedDates =~ /[0-9]{4}\s?-\s?[0-9]{0,4}/){
-                push @titleWarnings, { '039Ef' => $relTitle[$subfPos+1] };
-                push @titleWarningsGVK, { '039Ef' => $relTitle[$subfPos+1] };
+                push @titleWarnings, {
+                  '039Ef' => $relTitle[$subfPos+1]
+                };
+                push @titleWarningsGVK, {
+                  '039Ef' => $relTitle[$subfPos+1]
+                };
               }
             }
           }
@@ -1356,8 +1384,12 @@ sub createJSON {
               $sourceURL =~ s/=u\s//;
             }
             if($sourceURL =~ /http\/\//){
-              push @titleWarnings , {'009P0'=> $sourceURL};
-              push @titleWarningsGVK , {'009P0'=> $sourceURL};
+              push @titleWarnings , {
+                '009P0'=> $sourceURL
+              };
+              push @titleWarningsGVK , {
+                '009P0'=> $sourceURL
+              };
               $sourceURL =~ s/http\/\//http:\/\//;
             }
           }elsif($subField eq 'x'){
@@ -1391,14 +1423,22 @@ sub createJSON {
         if($url->has_recognized_scheme){
           $host = $url->authority;
           if(!$host){
-            push @titleWarnings , {'009P0'=> $sourceURL};
-            push @titleWarningsZDB , {'009P0'=> $sourceURL};
+            push @titleWarnings , {
+              '009P0'=> $sourceURL
+            };
+            push @titleWarningsZDB , {
+              '009P0'=> $sourceURL
+            };
             next;
           }
         }else{
           say "Looks like a wrong URL > ".$id;
-          push @titleWarnings , {'009P0'=> $sourceURL};
-          push @titleWarningsZDB , {'009P0'=> $sourceURL};
+          push @titleWarnings , {
+            '009P0'=> $sourceURL
+          };
+          push @titleWarningsZDB , {
+            '009P0'=> $sourceURL
+          };
           next;
         }
 

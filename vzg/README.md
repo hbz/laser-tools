@@ -3,6 +3,7 @@
 Dieses Script dient der Synchronisation von Nationallizenz-Paketen mit der GOKb.
 
 Es werden (je nach Parameter) mehrere Schritte durchlaufen:
+
 1. Import der Sigelinformationen aus dem Nationallizenzen-CMS
 2. Anreicherung der Paketinformationen mit Daten aus dem ZDB-Sigelverzeichnis
 3. Extrahieren von PICA+-Titeldaten über die SRU-Schnittstelle des GBV
