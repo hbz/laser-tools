@@ -33,8 +33,7 @@ use POSIX qw(strftime);
 use File::Copy;
 use Path::Class;
 use Scalar::Util qw(looks_like_number);
-use List::Util qw(min max);
-use List::MoreUtils qw(first_index);
+use List::MoreUtils qw(first_index any none);
 use LWP::UserAgent;
 use HTTP::Request;
 use HTTP::Request::Common;
@@ -214,7 +213,7 @@ if($argP >= 0){
 
 # No parameters
 
-if(scalar @ARGV == 0){
+if(scalar @ARGV == 0 || (!$argJ && !$argP)){
 
   say STDOUT "Keine Parameter gefunden!";
   say STDOUT "Mögliche Parameter sind:";
@@ -443,8 +442,8 @@ sub getSeals {
 
 sub createJSON {
 
-  my $postData = $_[0];
-  my ($filter) = $_[1];
+  my $postData = shift;
+  my ($filter) = shift;
 
   my $json_seals = do {
     open(my $json_fh, '<' , $knownSeals)
@@ -552,10 +551,26 @@ sub createJSON {
   foreach my $sigel (keys %knownSelection){
 
     my $currentTitle = 0;
-    my $noPublisher = 0;
     my %allISSN;
     my %inPackageIDs;
     my %package;
+
+    my $titlesTotalPkg = 0;
+    my $duplicateISSNsPkg = 0;
+    my $duplicateZDBids = 0;
+    my $noISSNPkg = 0;
+    my $wrongISSNPkg = 0;
+    my $pubFromAuthorPkg = 0;
+    my $pubFromCorpPkg = 0;
+    my $numNoUrlPkg = 0;
+    my $noPubMatchPkg = 0;
+    my $noPubGivenPkg = 0;
+    my $correctedAbbrs = 0;
+    my $relDatesInD = 0;
+    my $usefulRelated = 0;
+    my $possibleRelations = 0;
+    my $nlURLs = 0;
+    my $brokenURL = 0;
 
     my $json_pkg = JSON->new->utf8->canonical;
     my $out_pkg;
@@ -599,9 +614,7 @@ sub createJSON {
       name => "$provider: $pkgName: NL $pkgYear",
       # identifiers => { name => "ISIL", value => $sigel },
       additionalProperties => [],
-      variantNames => [{
-        variantName => $sigel
-      }],
+      variantNames => [ $sigel ],
       scope => "",
       listStatus => "Checked",
       breakable => "No",
@@ -619,9 +632,7 @@ sub createJSON {
           name => "GVK-SRU",
           normname => "GVK_SRU"
       },
-      curatoryGroups => [{
-        curatoryGroup => "LAS:eR"
-      }],
+      curatoryGroups => ["LAS:eR"],
     };
 
     $package{'tipps'} = [];
@@ -656,7 +667,7 @@ sub createJSON {
       my $ppn = pica_value($titleRecord, '003@0');
       my %titleInfo;
       my $id;
-      my $eissn;
+      my @eissn = ();
       my @relatedPrev = ();
 
       my @titleWarnings;
@@ -722,37 +733,57 @@ sub createJSON {
         ## eISSN
 
         if(pica_value($titleRecord, '005A0')){
-          $eissn = formatISSN(pica_value($titleRecord, '005A0'));
 
-          if($eissn eq ""){
-            print "ISSN ".pica_value($titleRecord, '005A0');
-            print " in Titel $id scheint ungültig zu sein!\n";
-            push @titleWarnings, {
-              '005A0' => $eissn
-            };
-            push @titleWarningsZDB, {
-              '005A0' => $eissn
-            };
-          }elsif($allISSN{$eissn}
-            || ( $globalIDs{$id} && $globalIDs{$id}{'eissn'} ne $eissn )
-          ){
-            say "eISSN $eissn in Titel $id wurde bereits vergeben!";
-            $duplicateISSNs++;
-            push @titleWarnings, {
-              '005A0' => $eissn,
-              'comment' => 'gleiche eISSN nach Titeländerung?'
-            };
-            push @titleWarningsZDB, {
-              '005A0' => $eissn,
-              'comment' => 'gleiche eISSN nach Titeländerung?'
-            };
-          }else{
-            push @{ $titleInfo{'identifiers'}} , {
-              'type' => "eissn",
-              'value' => $eissn
-            };
-            $allISSN{$eissn} = pica_value($titleRecord, '021Aa');
+          my @eissnValues = @{pica_fields($titleRecord, '005A')};
+
+          foreach my $eissnValue (@eissnValues) {
+            my @eissnValue = @{ $eissnValue };
+            my $subfPos = 0;
+            foreach my $subField (@eissnValue){
+              if($subField eq '0'){
+                my $eissn = formatISSN($eissnValue[$subfPos+1]);
+                my @globalIssns;
+                if($globalIDs{$id}){
+                  @globalIssns = @{ $globalIDs{$id}{'eissn'} };
+                }
+
+                if($eissn eq ""){
+                  print "ISSN ".pica_value($titleRecord, '005A0');
+                  print " in Titel $id scheint ungültig zu sein!\n";
+                  push @titleWarnings, {
+                    '005A0' => $eissn
+                  };
+                  push @titleWarningsZDB, {
+                    '005A0' => $eissn
+                  };
+                }elsif($allISSN{$eissn}
+                  || ( $globalIDs{$id} && none {$_ eq $eissn} @globalIssns)
+                ){
+                  say "eISSN $eissn in Titel $id wurde bereits vergeben!";
+                  $duplicateISSNs++;
+                  $duplicateISSNsPkg++;
+                  push @titleWarnings, {
+                    '005A0' => $eissn,
+                    'comment' => 'gleiche eISSN nach Titeländerung?'
+                  };
+                  push @titleWarningsZDB, {
+                    '005A0' => $eissn,
+                    'comment' => 'gleiche eISSN nach Titeländerung?'
+                  };
+                }else{
+                  push @eissn, $eissn;
+                  push @{ $titleInfo{'identifiers'}} , {
+                    'type' => "eissn",
+                    'value' => $eissn
+                  };
+                  $allISSN{$eissn} = pica_value($titleRecord, '021Aa');
+                }
+              }
+              $subfPos++;
+            }
           }
+        }else{
+          $noISSNPkg++;
         }
 
         ## pISSN
@@ -772,6 +803,7 @@ sub createJSON {
             print "Parallel-ISSN $pissn";
             print " in Titel $id wurde bereits als eISSN vergeben!\n";
             $wrongISSN++;
+            $wrongISSNPkg++;
             push @titleWarnings, {
               '005P0' => $pissn,
               'comment' => 'gleiche Vorgänger-eISSN als Parallel-ISSN?'
@@ -884,6 +916,17 @@ sub createJSON {
         my @releaseNote = @{ $releaseNote };
         my $subfPos = 0;
         foreach my $subField (@releaseNote){
+          if(any {$_ eq $subField} ["j","c","b","d","e","k","m","l","n","o"]){
+            if($releaseNote[$subfPos+1] =~ /\D/){
+              my $fullField = "031N$subField";
+              push @titleWarnings, {
+                  $fullField => $releaseNote[$subfPos+1]
+              };
+              push @titleWarningsZDB, {
+                  $fullField => $releaseNote[$subfPos+1]
+              };
+            }
+          }
           if($subField eq 'j'){
             if($releaseStart{'year'} ne ""){
               $releaseStart{'year'} = substr($releaseNote[$subfPos+1],0,4);
@@ -952,13 +995,6 @@ sub createJSON {
       ){
         if(looks_like_number($releaseStart{'month'})){
           $start_month = $releaseStart{'month'};
-        }elsif($releaseStart{'month'} ne ""){
-          push @titleWarnings, {
-              '031Nc' => pica_value($titleRecord, '031Nc')
-          };
-          push @titleWarningsZDB, {
-              '031Nc' => pica_value($titleRecord, '031Nc')
-          };
         }
         if(looks_like_number($releaseStart{'day'}) && $start_month != 0){
           $start_day = $releaseStart{'day'};
@@ -969,13 +1005,6 @@ sub createJSON {
       ){
         if(looks_like_number($releaseEnd{'month'})){
           $end_month = $releaseEnd{'month'};
-        }elsif($releaseEnd{'month'} ne ""){
-          push @titleWarnings, {
-              '031Nm' => pica_value($titleRecord, '031Nm')
-          };
-          push @titleWarningsZDB, {
-              '031Nm' => pica_value($titleRecord, '031Nm')
-          };
         }
         if(looks_like_number($releaseEnd{'day'}) && $end_month != 0){
           $end_day = $releaseEnd{'day'};
@@ -1009,6 +1038,7 @@ sub createJSON {
 
       if(!$checkPubs){
         $noPubGiven++;
+        $noPubGivenPkg++;
       }
       
       if(scalar @possiblePubs > 0){
@@ -1071,29 +1101,34 @@ sub createJSON {
           $tempPub =~ s/[\[\]]//g;
           $tempPub =~ s/u\.\s?a\.//g;
 
-          if(index(lc($tempPub), "publ") >= 0){
+          if($tempPub =~ /(^|\s)[pP]ubl\.?(\s|$)/){
 
             $tempPub =~ s/(^|\s)([pP]ubl)\.?(\s|$)/$1Pub$3/g;
+            $correctedAbbrs++;
           }
 
-          if(index(lc($tempPub), "assoc") >= 0){
+          if($tempPub =~ /(^|\s)[Aa]ssoc\.?(\s|$)/){
 
             $tempPub =~ s/(^|\s)([Aa]ssoc)\.?(\s|$)/$1Association$3/g;
+            $correctedAbbrs++;
           }
 
-          if(index(lc($tempPub), "soc") >= 0){
+          if($tempPub =~ /(^|\s)[Ss]oc\.?(\s|$)/){
 
             $tempPub =~ s/(^|\s)([Ss]oc)\.?(\s|$)/$1Society$3/g;
+            $correctedAbbrs++;
           }
 
-          if(index(lc($tempPub), "univ") >= 0){
+          if($tempPub =~ /(^|\s)[Uu]niv\.?(\s|$)/){
 
             $tempPub =~ s/(^|\s)([Uu]niv)\.?(\s|$)/$1University$3/g;
+            $correctedAbbrs++;
           }
 
-          if(index(lc($tempPub), "acad") >= 0){
+          if($tempPub =~ /(^|\s)[Aa]cad\.?(\s$)/){
 
             $tempPub =~ s/(^|\s)([Aa]cad)\.?(\s|$)/$1Academic$3/g;
+            $correctedAbbrs++;
           }
 
           ## Verlag verifizieren & hinzufügen
@@ -1112,6 +1147,7 @@ sub createJSON {
             || $tempPub =~ /u\.\s?a\./
           ){
             $noPubMatch++;
+            $noPubMatchPkg++;
             push @titleWarnings, {
               '033An' => $preCorrectedPub
             };
@@ -1136,6 +1172,7 @@ sub createJSON {
                 'status' => ""
             };
             $pubFromAuthor++;
+            $pubFromAuthorPkg++;
           }
           # print "Used author $authorField as publisher.\n";
         }elsif($corpField){
@@ -1148,6 +1185,7 @@ sub createJSON {
                 'status' => ""
             };
             $pubFromCorp++;
+            $pubFromCorpPkg++;
           }
           # print "Used corp $corpField as publisher.\n";
         }
@@ -1197,6 +1235,7 @@ sub createJSON {
                   '039Ed' => $relTitle[$subfPos+1],
                   'comment' => 'Datumsangaben gehören in Unterfeld f.'
                 };
+                $relDatesInD++;
               }
             }
             if($tempStartYear){
@@ -1210,6 +1249,7 @@ sub createJSON {
                   '039Ed' => $relTitle[$subfPos+1],
                   'comment' => 'Datumsangaben gehören in Unterfeld f.'
                 };
+                $relDatesInD++;
               }
             }
             if($subField eq 'f'){
@@ -1227,6 +1267,7 @@ sub createJSON {
           $subfPos++;
         }
         if($relatedID){
+          $possibleRelations++;
           my $isInList = $inPackageIDs{$relatedID} ? "yes" : "no";
 
           if($relationType && $relationType ne ( 'Druckausg' || 'Druckausg.' )){
@@ -1245,9 +1286,9 @@ sub createJSON {
           && $globalIDs{$relatedID}
           && $rStartYear
           && scalar @connectedIDs > 0
-          && $id ~~ @connectedIDs
+          && any {$_ eq $id} @connectedIDs
         ){
-
+          $usefulRelated++;
           if($rEndYear){
             if($rEndYear < $start_year){ # Vorg.
               push @{ $titleInfo{'historyEvents'} } , {
@@ -1372,6 +1413,7 @@ sub createJSON {
         my %tipp;
         my @eSource = @{ $eSource };
         my $sourceURL = "";
+        my $viableURL = 0;
         my $internalComments = "";
         my $publicComments = "";
         my $subfPos = 0;
@@ -1390,6 +1432,7 @@ sub createJSON {
               push @titleWarningsGVK , {
                 '009P0'=> $sourceURL
               };
+              $brokenURL++;
               $sourceURL =~ s/http\/\//http:\/\//;
             }
           }elsif($subField eq 'x'){
@@ -1408,6 +1451,7 @@ sub createJSON {
           next;
         }else{
           $noViableUrl = 0;
+          $nlURLs++;
         }
 
         $tipp{'status'} = "Current";
@@ -1429,6 +1473,7 @@ sub createJSON {
             push @titleWarningsZDB , {
               '009P0'=> $sourceURL
             };
+            $brokenURL++;
             next;
           }
         }else{
@@ -1439,6 +1484,7 @@ sub createJSON {
           push @titleWarningsZDB , {
             '009P0'=> $sourceURL
           };
+          $brokenURL++;
           next;
         }
 
@@ -1554,50 +1600,57 @@ sub createJSON {
         # -------------------- TitleInstance (in TIPP) --------------------
 
         $tipp{'title'} = {
-          'identifiers' => [],
-          'name' => "",
+          'identifiers' => \@{ $titleInfo{'identifiers'} },
+          'name' => $titleInfo{'name'},
           'type' => $gokbType
         };
-
-        ## Name
-
-        $tipp{'title'}{'name'} = $titleInfo{'name'};
-
-        ## Identifiers
-
-        foreach my $idPair ( @{ $titleInfo{'identifiers'} } ){
-          my %idPair = %{ $idPair };
-          push @{ $tipp{'title'}{'identifiers'} } , \%idPair;
-        }
 
         push @{ $package{'tipps'} } , \%tipp;
       } # End TIPP
 
-      # -------------------- Compile warning files --------------------
+      # -------------------- NO viable URL found ... --------------------
 
       if($noViableUrl == 1){
         $numNoUrl++;
+        $numNoUrlPkg++;
+        my $platformURL = URI->new( $knownSelection{$sigel}{'platformURL'} );
+        my $platformHost = $platformURL->authority;
+
         push @titleWarnings , {
             '009P0'=> "ZDB-URLs != GVK-URLs?"
         };
         push @titleWarningsGVK , {
             '009P0'=> "ZDB-URLs != GVK-URLs?"
         };
+        push @{ $package{'tipps'} } , {
+          'medium' => "Electronic",
+          'platform' => {
+            'name' => $platformHost,
+            'primaryUrl' => $platformHost
+          },
+          'status' => "Current",
+          'title' => {
+            'identifiers' => \@{$titleInfo{'identifiers'}},
+            'name' => $titleInfo{'name'},
+            'type' => "Serial"
+          }
+        }
       }
       if(scalar @titleWarnings > 0){
-        $authorityNotes{$knownSelection{$sigel}{'authority'}}{$sigel}{$id} =
+        $authorityNotes{$knownSelection{$sigel}{'authority'}}{$sigel}{'warnings'}{$id} =
           \@titleWarnings;
       }
       if(scalar @titleWarningsZDB > 0){
-        $authorityNotesZDB{$knownSelection{$sigel}{'authority'}}{$sigel}{$id} =
+        $authorityNotesZDB{$knownSelection{$sigel}{'authority'}}{$sigel}{'warnings'}{$id} =
           \@titleWarningsZDB;
       }
       if(scalar @titleWarningsGVK > 0){
-        $authorityNotesGVK{$knownSelection{$sigel}{'authority'}}{$sigel}{$id} =
+        $authorityNotesGVK{$knownSelection{$sigel}{'authority'}}{$sigel}{'warnings'}{$id} =
           \@titleWarningsGVK;
       }
 
       $titlesTotal++;
+      $titlesTotalPkg++;
 
       # -------------------- Collect IDs --------------------
 
@@ -1608,7 +1661,7 @@ sub createJSON {
         };
         unless($globalIDs{$id}){
           $globalIDs{$id} = {
-              'eissn' => $eissn,
+              'eissn' => \@eissn,
               'title' => $titleInfo{'name'},
               'connected' => \@relatedPrev
           };
@@ -1616,8 +1669,66 @@ sub createJSON {
         push @allTitles , \%titleInfo;
       }else{
         say "ID ".$id." ist bereits in der Titelliste vorhanden!";
+        $duplicateZDBids++;
       }
     } ## End TitleInstance
+
+    $authorityNotes{$knownSelection{$sigel}{'authority'}}{$sigel}{'stats'} = {
+      'numJournals' => $titlesTotalPkg,
+      'dupeISSN' => $duplicateISSNsPkg,
+      'dupeZDB' => $duplicateZDBids,
+      'noISSN' => $noISSNPkg,
+      'wrongISSN' => $wrongISSNPkg,
+      'pubFromAuthor' => $pubFromAuthorPkg,
+      'pubFromCorp' => $pubFromCorpPkg,
+      'noURL' => $numNoUrlPkg,
+      'noPubMatch' => $noPubMatchPkg,
+      'noPubGivenPkg' => $noPubGivenPkg,
+      'correctedAbbrs' => $correctedAbbrs,
+      'relDatesInD' => $relDatesInD,
+      'usefulRelated' => $usefulRelated,
+      'possibleRelations' => $possibleRelations,
+      'numViableURLs' => $nlURLs,
+      'brokenURL' => $brokenURL
+    };
+
+    $authorityNotesGVK{$knownSelection{$sigel}{'authority'}}{$sigel}{'stats'} = {
+      'numJournals' => $titlesTotalPkg,
+      'dupeISSN' => $duplicateISSNsPkg,
+      'dupeZDB' => $duplicateZDBids,
+      'noISSN' => $noISSNPkg,
+      'wrongISSN' => $wrongISSNPkg,
+      'pubFromAuthor' => $pubFromAuthorPkg,
+      'pubFromCorp' => $pubFromCorpPkg,
+      'noURL' => $numNoUrlPkg,
+      'noPubMatch' => $noPubMatchPkg,
+      'noPubGivenPkg' => $noPubGivenPkg,
+      'correctedAbbrs' => $correctedAbbrs,
+      'relDatesInD' => $relDatesInD,
+      'usefulRelated' => $usefulRelated,
+      'possibleRelations' => $possibleRelations,
+      'numViableURLs' => $nlURLs,
+      'brokenURL' => $brokenURL
+    };
+
+    $authorityNotesZDB{$knownSelection{$sigel}{'authority'}}{$sigel}{'stats'} = {
+      'numJournals' => $titlesTotalPkg,
+      'dupeISSN' => $duplicateISSNsPkg,
+      'dupeZDB' => $duplicateZDBids,
+      'noISSN' => $noISSNPkg,
+      'wrongISSN' => $wrongISSNPkg,
+      'pubFromAuthor' => $pubFromAuthorPkg,
+      'pubFromCorp' => $pubFromCorpPkg,
+      'noURL' => $numNoUrlPkg,
+      'noPubMatch' => $noPubMatchPkg,
+      'noPubGivenPkg' => $noPubGivenPkg,
+      'correctedAbbrs' => $correctedAbbrs,
+      'relDatesInD' => $relDatesInD,
+      'usefulRelated' => $usefulRelated,
+      'possibleRelations' => $possibleRelations,
+      'numViableURLs' => $nlURLs,
+      'brokenURL' => $brokenURL
+    };
 
     if($filter){
       say $out_pkg $json_pkg->pretty(1)->encode( \%package );
@@ -1673,8 +1784,10 @@ sub createJSON {
   ## Final statistics
 
   my $timeElapsed = duration(time() - $startTime);
+  my $finishedRun = strftime '%Y-%m-%d %H:%M:%S', localtime;
 
   say "\n**********************\n";
+  say "Run finished at $finishedRun";
   say "Runtime: $timeElapsed";
   say "$titlesTotal relevante Titel in $packagesTotal Paketen";
   say "$numNoUrl Titel ohne NL-URL";
@@ -1696,8 +1809,8 @@ sub createJSON {
 # Submit package/title JSON to GOKb-API
 
 sub postData {
-  my $endPointType = $_[0];
-  my $data = $_[1];
+  my $endPointType = shift;
+  my $data = shift;
   my $endPoint = $gokbCreds{'base'}."integration/".$endPointType;
   
   if($data && ref($data) eq 'HASH'){
@@ -1732,7 +1845,7 @@ sub postData {
 # ensure ISSN format
 
 sub formatISSN {
-  my ($issn) = $_[0];
+  my ($issn) = shift;
   if($issn && $issn =~ /^[0-9xX]{4}-?[0-9xX]{4}$/){
     if(index($issn, '-') eq '-1'){
       $issn = join('-', unpack('a4 a4', $issn));
@@ -1747,7 +1860,7 @@ sub formatISSN {
 # ensure ZDB-ID format
 
 sub formatZdbId {
-  my ($id) = $_[0];
+  my ($id) = shift;
 
   if($id && $id =~ /^\d*-?[0-9xX]?$/){
     $id =~ s/-//g;
@@ -1762,7 +1875,7 @@ sub formatZdbId {
 # look up a provided publisher in ONLD.jsonld
 
 sub searchNcsuOrgs {
-  my $pubName = $_[0];
+  my $pubName = shift;
   my $normPubName = normalizeString($pubName);
   my $publisherMatch = 0;
   foreach my $ncsuOrg ( @{ $orgsJSON{'@graph'} } ) {
@@ -1792,7 +1905,7 @@ sub searchNcsuOrgs {
 # note: replicated GOKb string normalization process
 
 sub normalizeString {
-  my $origString = $_[0];
+  my $origString = shift;
   my $normString = "";
   my @stopWords = ( "and", "the", "from" );
   my $NFD_string = NFD($origString);
@@ -1801,7 +1914,7 @@ sub normalizeString {
   my @stringParts = split(/\s/, $NFD_string);
   @stringParts = sort @stringParts;
   foreach my $stringPart (@stringParts){
-    unless($stringPart ~~ @stopWords){
+    unless(any {$_ eq $stringPart} @stopWords){
       $stringPart =~ s/[^a-z0-9]/ /g;
       $normString .= $stringPart;
     }
