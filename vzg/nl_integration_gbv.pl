@@ -517,6 +517,7 @@ sub createJSON {
   my $duplicateISSNs = 0;
   my $wrongISSN = 0;
   my $skippedPackages = "";
+  my $pubFromGnd = 0;
   my $pubFromAuthor = 0;
   my $pubFromCorp = 0;
   my $numNoUrl = 0;
@@ -560,6 +561,7 @@ sub createJSON {
     my $duplicateZDBids = 0;
     my $noISSNPkg = 0;
     my $wrongISSNPkg = 0;
+    my $pubFromGndPkg = 0;
     my $pubFromAuthorPkg = 0;
     my $pubFromCorpPkg = 0;
     my $numNoUrlPkg = 0;
@@ -1033,6 +1035,7 @@ sub createJSON {
       my @possiblePubs = @{ pica_fields($titleRecord, '033A') };
       my $checkPubs = pica_value($titleRecord, '033An');
       my @altPubs = @{ pica_fields($titleRecord, '033B[05]') };
+      my @gndPubs = @{ pica_fields($titleRecord, '029G') };
       my $authorField = pica_value($titleRecord, '021Ah');
       my $corpField = pica_value($titleRecord, '029Aa');
 
@@ -1162,30 +1165,66 @@ sub createJSON {
 
       if(scalar @{ $titleInfo{'publisher_history'} } == 0) {
 
-        if($authorField){
-          my $ncsuAuthor = searchNcsuOrgs($authorField);
-          if($ncsuAuthor ne '0'){
-            push @{ $titleInfo{'publisher_history'}} , {
-                'name' => $ncsuAuthor,
-                'startDate' => convertToTimeStamp($dts[0][0], 0),
-                'endDate' => convertToTimeStamp($dts[0][1], 1),
-                'status' => ""
-            };
-            $pubFromAuthor++;
-            $pubFromAuthorPkg++;
+        if(scalar @gndPubs > 0){
+          foreach my $pub (@gndPubs) {
+            my @pub = @{ $pub };
+            my $tempPub;
+            my $pubStart;
+            my $pubEnd;
+            my $subfPos = 0;
+            my $preCorrectedPub = "";
+            foreach my $subField (@pub){
+              if($subField eq 'a'){
+                my $ncsuPub = searchNcsuOrgs($pub[$subfPos+1]);
+                my $pubName = $pub[$subfPos+1];
+
+                if($ncsuPub eq '0'){
+                  push @titleWarnings, {
+                    '029Ga' => \@pub
+                  };
+                  push @titleWarningsZDB, {
+                    '029Ga' => \@pub
+                  };
+                }
+                push @{ $titleInfo{'publisher_history'}} , {
+                    'name' => $pubName,
+                    'startDate' => $pubStart ? $pubStart : "",
+                    'endDate' => $pubEnd ? $pubEnd : "",
+                    'status' => "Active"
+                };
+                $pubFromGnd++;
+                $pubFromGndPkg++;
+              }
+              $subfPos++;
+            }
           }
-          # print "Used author $authorField as publisher.\n";
-        }elsif($corpField){
-          my $ncsuCorp = searchNcsuOrgs($corpField);
-          if($ncsuCorp ne '0'){
-            push @{ $titleInfo{'publisher_history'}} , {
-                'name' => $ncsuCorp,
-                'startDate' => convertToTimeStamp($dts[0][0], 0),
-                'endDate' => convertToTimeStamp($dts[0][1], 1),
-                'status' => ""
-            };
-            $pubFromCorp++;
-            $pubFromCorpPkg++;
+        }else{
+
+          if($authorField){
+            my $ncsuAuthor = searchNcsuOrgs($authorField);
+            if($ncsuAuthor ne '0'){
+              push @{ $titleInfo{'publisher_history'}} , {
+                  'name' => $ncsuAuthor,
+                  'startDate' => convertToTimeStamp($dts[0][0], 0),
+                  'endDate' => convertToTimeStamp($dts[0][1], 1),
+                  'status' => ""
+              };
+              $pubFromAuthor++;
+              $pubFromAuthorPkg++;
+            }
+            # print "Used author $authorField as publisher.\n";
+          }elsif($corpField){
+            my $ncsuCorp = searchNcsuOrgs($corpField);
+            if($ncsuCorp ne '0'){
+              push @{ $titleInfo{'publisher_history'}} , {
+                  'name' => $ncsuCorp,
+                  'startDate' => convertToTimeStamp($dts[0][0], 0),
+                  'endDate' => convertToTimeStamp($dts[0][1], 1),
+                  'status' => ""
+              };
+              $pubFromCorp++;
+              $pubFromCorpPkg++;
+            }
           }
           # print "Used corp $corpField as publisher.\n";
         }
@@ -1679,6 +1718,7 @@ sub createJSON {
       'dupeZDB' => $duplicateZDBids,
       'noISSN' => $noISSNPkg,
       'wrongISSN' => $wrongISSNPkg,
+      'pubFromGnd' => $pubFromGndPkg,
       'pubFromAuthor' => $pubFromAuthorPkg,
       'pubFromCorp' => $pubFromCorpPkg,
       'noURL' => $numNoUrlPkg,
@@ -1698,6 +1738,7 @@ sub createJSON {
       'dupeZDB' => $duplicateZDBids,
       'noISSN' => $noISSNPkg,
       'wrongISSN' => $wrongISSNPkg,
+      'pubFromGnd' => $pubFromGndPkg,
       'pubFromAuthor' => $pubFromAuthorPkg,
       'pubFromCorp' => $pubFromCorpPkg,
       'noURL' => $numNoUrlPkg,
@@ -1717,6 +1758,7 @@ sub createJSON {
       'dupeZDB' => $duplicateZDBids,
       'noISSN' => $noISSNPkg,
       'wrongISSN' => $wrongISSNPkg,
+      'pubFromGnd' => $pubFromGndPkg,
       'pubFromAuthor' => $pubFromAuthorPkg,
       'pubFromCorp' => $pubFromCorpPkg,
       'noURL' => $numNoUrlPkg,
@@ -1795,6 +1837,7 @@ sub createJSON {
   say "$wrongISSN eISSNs als Parallel-ISSN (005P0)";
   say "$noPubGiven Titel ohne Verlag (033An)";
   say "$noPubMatch Verlagsfelder mit der GOKb unbekanntem Verlagsnamen (033An)";
+  say "$pubFromGnd Verlage durch GND-Verweis identifiziert (029Ga)";
   say "$pubFromAuthor als Verlag verwendete Autoren (021Ah)";
   say "$pubFromCorp als Verlag verwendete Primärkörperschaften (029Aa)";
   if($skippedPackages ne ""){
