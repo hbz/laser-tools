@@ -308,7 +308,8 @@ sub getSeals {
   my $orgStmt = qq(SELECT zobjects.licences.zuid,
     zobjects.licences.wf_state,
     zobjects.nlinstitutions.title as institution,
-    zobjects.nlinstitutions.sigel as sigel
+    zobjects.nlinstitutions.sigel as sigel,
+    zobjects.nlinstitutions.uid as uid
     FROM zobjects.licences, zobjects.nlinstitutions
     WHERE zobjects.licences.lmodel = ?
     AND zobjects.licences.lowner::uuid=zobjects.nlinstitutions.zuid;
@@ -358,6 +359,7 @@ sub getSeals {
         my $orgStatus = $orgRow[1];
         my $orgName = $orgRow[2];
         my $orgSigel = $orgRow[3] ? $orgRow[3] : undef;
+        my $orgWibID = $orgRow[4];
         my $fixedSigel = undef;
 
         ### Verify Seals
@@ -399,7 +401,8 @@ sub getSeals {
             'name' => $orgName,
             'sigel' => $orgSigel,
             'fixedSigel' => $fixedSigel,
-            'status' => $orgStatus
+            'status' => $orgStatus,
+            'wibID' => $orgWibID
         };
       }
       $pkg{'orgStats'}{'numCms'} = scalar @{ $pkg{'cmsOrgs'} };
@@ -528,6 +531,7 @@ sub createJSON {
 
   my @allTitles;
   my %globalIDs;
+  my @unknownRelIds;
   my %authorityNotes;
   my %authorityNotesZDB;
   my %authorityNotesGVK;
@@ -758,9 +762,7 @@ sub createJSON {
                   push @titleWarningsZDB, {
                     '005A0' => $eissn
                   };
-                }elsif($allISSN{$eissn}
-                  || ( $globalIDs{$id} && none {$_ eq $eissn} @globalIssns)
-                ){
+                }elsif($allISSN{$eissn}){
                   say "eISSN $eissn in Titel $id wurde bereits vergeben!";
                   $duplicateISSNs++;
                   $duplicateISSNsPkg++;
@@ -771,6 +773,16 @@ sub createJSON {
                   push @titleWarningsZDB, {
                     '005A0' => $eissn,
                     'comment' => 'gleiche eISSN nach Titeländerung?'
+                  };
+                }elsif($globalIDs{$id} && none {$_ eq $eissn} @globalIssns){
+                  say "eISSN $eissn kommt in bereits erschlossenem Titel $id nicht vor!";
+                  push @titleWarnings, {
+                    '005A0' => $eissn,
+                    'comment' => 'ISSN bei gleicher ZDB-ID nicht vergeben?'
+                  };
+                  push @titleWarningsZDB, {
+                    '005A0' => $eissn,
+                    'comment' => 'ISSN bei gleicher ZDB-ID nicht vergeben?'
                   };
                 }else{
                   push @eissn, $eissn;
@@ -1432,6 +1444,11 @@ sub createJSON {
               say "Verknüpft: $rStartYear-".($rEndYear ? $rEndYear : "");
             }
           }
+        }elsif($relatedID && !$globalIDs{$relatedID}){
+          say "Unknown connected ID $relatedID!";
+          unless(any {$_ eq $relatedID} @unknownRelIds){
+            push @unknownRelIds, $relatedID;
+          }
         }
       }
 
@@ -1804,6 +1821,18 @@ sub createJSON {
     my $out_titles = $tfile->openw();
     say $out_titles $json_titles->pretty(1)->encode( \@allTitles );
     close($out_titles);
+  }
+
+  if(scalar @unknownRelIds > 0){
+    my $ufile = file("Unknown_IDs");
+    $ufile->touch();
+    my $out_unknown = $ufile->openw();
+
+    foreach my $unknownId (@unknownRelIds){
+      if(!$globalIDs{$unknownId}){
+        say $out_unknown $unknownId;
+      }
+    }
   }
 
   # Submit collected titles to GOKb
