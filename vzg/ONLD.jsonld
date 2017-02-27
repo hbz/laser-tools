@@ -19752,7 +19752,8 @@
         "@id": "http://www.lib.ncsu.edu/ld/onld/00000182" ,
         "skos:prefLabel": "East View Publications" ,
             "skos:altLabel": [  
-            "East View Information Services"
+            "East View Information Services",
+            "East View Information Services BV"
             ] ,
             "foaf:homepage": "http://www.eastview.com/" ,
             "skos:closeMatch": [
@@ -23442,6 +23443,7 @@
             "Verlag von Georg Thieme" ,
             "Georg Thieme" ,
             "G. Thieme Verlag" ,
+            "Georg Thieme Verlag KG",
             "G. Thieme" ,
             "Georg Thieme Verlag (Stuttgart, Germany)"
             ] ,
@@ -37246,6 +37248,7 @@
             "skos:altLabel": [  
             "Newsbank inc" ,
             "Readex [Division of Newsbank]" ,
+            "Readex",
             "NewsBank, inc" ,
             "Newsbank"
             ] ,
@@ -55837,7 +55840,8 @@
             "W. de Gruyter" ,
             "Walter de Gruyter GmbH & Co. KG" ,
             "Walter de Gruyter & Co" ,
-            "Walter de Gruyter GmbH & Co. KG"
+            "Walter de Gruyter GmbH & Co. KG" ,
+            "Mouton de Gruyter"
             ] ,
             "foaf:homepage": "http://www.degruyter.com/" ,
             "skos:closeMatch": [

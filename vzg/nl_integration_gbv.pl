@@ -526,6 +526,7 @@ sub createJSON {
   my $numNoUrl = 0;
   my $noPubMatch = 0;
   my $noPubGiven = 0;
+  my $numDoi = 0;
 
   # Collections
 
@@ -560,23 +561,26 @@ sub createJSON {
     my %inPackageIDs;
     my %package;
 
-    my $titlesTotalPkg = 0;
-    my $duplicateISSNsPkg = 0;
-    my $duplicateZDBids = 0;
-    my $noISSNPkg = 0;
-    my $wrongISSNPkg = 0;
-    my $pubFromGndPkg = 0;
-    my $pubFromAuthorPkg = 0;
-    my $pubFromCorpPkg = 0;
-    my $numNoUrlPkg = 0;
-    my $noPubMatchPkg = 0;
-    my $noPubGivenPkg = 0;
-    my $correctedAbbrs = 0;
-    my $relDatesInD = 0;
-    my $usefulRelated = 0;
-    my $possibleRelations = 0;
-    my $nlURLs = 0;
-    my $brokenURL = 0;
+    my %pkgStats = (
+      'titlesTotalPkg' => 0,
+      'duplicateISSNsPkg' => 0,
+      'duplicateZDBids' => 0,
+      'noISSNPkg' => 0,
+      'wrongISSNPkg' => 0,
+      'pubFromGndPkg' => 0,
+      'pubFromAuthorPkg' => 0,
+      'pubFromCorpPkg' => 0,
+      'numNoUrlPkg' => 0,
+      'noPubMatchPkg' => 0,
+      'noPubGivenPkg' => 0,
+      'correctedAbbrs' => 0,
+      'relDatesInD' => 0,
+      'usefulRelated' => 0,
+      'possibleRelations' => 0,
+      'nlURLs' => 0,
+      'brokenURL' => 0,
+      'doiPkg' => 0
+    );
 
     my $json_pkg = JSON->new->utf8->canonical;
     my $out_pkg;
@@ -645,7 +649,7 @@ sub createJSON {
 
     my $qryString = 'pica.xpr='.$sigel;
     if($onlyJournals == 1){
-      $qryString .= ' and (pica.mak=Obvz or pica.mak=Obv)';
+      $qryString .= ' and (pica.mak=Ob* or pica.mak=Od*)';
     }
     $qryString .= ' sortBy year/sort.ascending';
     my %attrs = (
@@ -668,6 +672,8 @@ sub createJSON {
     while (my $titleRecord = $sruTitles->next){
       $currentTitle++;
       my $materialType = pica_value($titleRecord, '002@0');
+      my $typeChar = substr($materialType, 1, 1);
+      my $isJournal = any {$_ eq $typeChar} ("b", "d");
       my $gokbType;
       my $gokbMedium;
       my $ppn = pica_value($titleRecord, '003@0');
@@ -682,16 +688,16 @@ sub createJSON {
 
       # Process material code
 
-      if(substr($materialType, 1, 1) eq 'b'){
+      if($isJournal){
         $gokbType = "Serial";
-      }else{
-        $gokbType = "";
+      }elsif(substr($materialType, 1, 1) eq 'a'){
+        $gokbType = "Monograph";
       }
 
-      if(substr($materialType, 1, 1) eq 'b'){
+      if($isJournal){
         $gokbMedium = "Journal";
-      }else{
-        $gokbMedium = "";
+      }elsif(substr($materialType, 1, 1) eq 'a'){
+        $gokbMedium = "Book";
       }
 
       # -------------------- Identifiers --------------------
@@ -705,9 +711,20 @@ sub createJSON {
         'value' => $ppn
       };
 
+      ## DOI
+
+      my $doi = pica_value($titleRecord, '004V0');
+
+      if($doi){
+        push @{ $titleInfo{'identifiers'} } , {
+          'type' => "doi",
+          'value' => $doi
+        }
+      }
+
       ## Journal-IDs
 
-      if(substr($materialType, 0, 2) eq 'Ob'){
+      if($isJournal){
 
         ## ZDB-ID
 
@@ -728,10 +745,10 @@ sub createJSON {
           print "Titel mit ppn ".pica_value($titleRecord, '003@0');
           print " hat keine ZDB-ID! Überspringe Titel..\n";
           push @titleWarnings, {
-              '006Z0' => pica_values($titleRecord, '006Z0')
+              '006Z0' => $ppn
           };
           push @titleWarningsGVK, {
-              '006Z0' => pica_values($titleRecord, '006Z0')
+              '006Z0' => $ppn
           };
           next;
         }
@@ -757,15 +774,17 @@ sub createJSON {
                   print "ISSN ".pica_value($titleRecord, '005A0');
                   print " in Titel $id scheint ungültig zu sein!\n";
                   push @titleWarnings, {
-                    '005A0' => $eissn
+                    '005A0' => $eissnValue[$subfPos+1],
+                    'comment' => 'ISSN konnte nicht validiert werden.'
                   };
                   push @titleWarningsZDB, {
-                    '005A0' => $eissn
+                    '005A0' => $eissnValue[$subfPos+1],
+                    'comment' => 'ISSN konnte nicht validiert werden.'
                   };
                 }elsif($allISSN{$eissn}){
                   say "eISSN $eissn in Titel $id wurde bereits vergeben!";
                   $duplicateISSNs++;
-                  $duplicateISSNsPkg++;
+                  $pkgStats{'duplicateISSNsPkg'}++;
                   push @titleWarnings, {
                     '005A0' => $eissn,
                     'comment' => 'gleiche eISSN nach Titeländerung?'
@@ -797,7 +816,7 @@ sub createJSON {
             }
           }
         }else{
-          $noISSNPkg++;
+          $pkgStats{'noISSNPkg'}++;
         }
 
         ## pISSN
@@ -817,7 +836,7 @@ sub createJSON {
             print "Parallel-ISSN $pissn";
             print " in Titel $id wurde bereits als eISSN vergeben!\n";
             $wrongISSN++;
-            $wrongISSNPkg++;
+            $pkgStats{'wrongISSNPkg'}++;
             push @titleWarnings, {
               '005P0' => $pissn,
               'comment' => 'gleiche Vorgänger-eISSN als Parallel-ISSN?'
@@ -827,6 +846,10 @@ sub createJSON {
               'comment' => 'gleiche Vorgänger-eISSN als Parallel-ISSN?'
             };
           }
+        }
+      }elsif(substr($materialType, 0, 2) eq 'Oa'){
+        if(pica_value($titleRecord, '004A')){
+          my @isbnFields = @{ pica_fields($titleRecord, '004A') };
         }
       }
 
@@ -855,7 +878,7 @@ sub createJSON {
       # Check, if the title is a journal
       # (shouldn't be necessary since it should be included in the search query)
 
-      if($onlyJournals == 1 && substr($materialType, 0, 2) ne 'Ob'){
+      if($onlyJournals == 1 && !$isJournal){
         print "Überspringe Titel ".pica_value($titleRecord, '021Aa');
         print ", Materialcode: $materialType\n";
         next;
@@ -1053,7 +1076,7 @@ sub createJSON {
 
       if(!$checkPubs){
         $noPubGiven++;
-        $noPubGivenPkg++;
+        $pkgStats{'noPubGivenPkg'}++;
       }
       
       if(scalar @possiblePubs > 0){
@@ -1069,9 +1092,6 @@ sub createJSON {
             if($subField eq 'n'){
               if($tempPub){
                 push @titleWarnings, {
-                  '033A' => \@pub
-                };
-                push @titleWarningsZDB, {
                   '033A' => \@pub
                 };
                 push @titleWarningsGVK, {
@@ -1119,31 +1139,31 @@ sub createJSON {
           if($tempPub =~ /(^|\s)[pP]ubl\.?(\s|$)/){
 
             $tempPub =~ s/(^|\s)([pP]ubl)\.?(\s|$)/$1Pub$3/g;
-            $correctedAbbrs++;
+            $pkgStats{'correctedAbbrs'}++;
           }
 
           if($tempPub =~ /(^|\s)[Aa]ssoc\.?(\s|$)/){
 
             $tempPub =~ s/(^|\s)([Aa]ssoc)\.?(\s|$)/$1Association$3/g;
-            $correctedAbbrs++;
+            $pkgStats{'correctedAbbrs'}++;
           }
 
           if($tempPub =~ /(^|\s)[Ss]oc\.?(\s|$)/){
 
             $tempPub =~ s/(^|\s)([Ss]oc)\.?(\s|$)/$1Society$3/g;
-            $correctedAbbrs++;
+            $pkgStats{'correctedAbbrs'}++;
           }
 
           if($tempPub =~ /(^|\s)[Uu]niv\.?(\s|$)/){
 
             $tempPub =~ s/(^|\s)([Uu]niv)\.?(\s|$)/$1University$3/g;
-            $correctedAbbrs++;
+            $pkgStats{'correctedAbbrs'}++;
           }
 
           if($tempPub =~ /(^|\s)[Aa]cad\.?(\s$)/){
 
             $tempPub =~ s/(^|\s)([Aa]cad)\.?(\s|$)/$1Academic$3/g;
-            $correctedAbbrs++;
+            $pkgStats{'correctedAbbrs'}++;
           }
 
           ## Verlag verifizieren & hinzufügen
@@ -1162,7 +1182,7 @@ sub createJSON {
             || $tempPub =~ /u\.\s?a\./
           ){
             $noPubMatch++;
-            $noPubMatchPkg++;
+            $pkgStats{'noPubMatchPkg'}++;
             push @titleWarnings, {
               '033An' => $preCorrectedPub
             };
@@ -1205,7 +1225,7 @@ sub createJSON {
                     'status' => "Active"
                 };
                 $pubFromGnd++;
-                $pubFromGndPkg++;
+                $pkgStats{'pubFromGndPkg'}++;
               }
               $subfPos++;
             }
@@ -1222,7 +1242,7 @@ sub createJSON {
                   'status' => ""
               };
               $pubFromAuthor++;
-              $pubFromAuthorPkg++;
+              $pkgStats{'pubFromAuthorPkg'}++;
             }
             # print "Used author $authorField as publisher.\n";
           }elsif($corpField){
@@ -1235,7 +1255,7 @@ sub createJSON {
                   'status' => ""
               };
               $pubFromCorp++;
-              $pubFromCorpPkg++;
+              $pkgStats{'pubFromCorpPkg'}++;
             }
           }
           # print "Used corp $corpField as publisher.\n";
@@ -1286,7 +1306,7 @@ sub createJSON {
                   '039Ed' => $relTitle[$subfPos+1],
                   'comment' => 'Datumsangaben gehören in Unterfeld f.'
                 };
-                $relDatesInD++;
+                $pkgStats{'relDatesInD'}++;
               }
             }
             if($tempStartYear){
@@ -1300,7 +1320,7 @@ sub createJSON {
                   '039Ed' => $relTitle[$subfPos+1],
                   'comment' => 'Datumsangaben gehören in Unterfeld f.'
                 };
-                $relDatesInD++;
+                $pkgStats{'relDatesInD'}++;
               }
             }
             if($subField eq 'f'){
@@ -1318,7 +1338,7 @@ sub createJSON {
           $subfPos++;
         }
         if($relatedID){
-          $possibleRelations++;
+          $pkgStats{'possibleRelations'}++;
           my $isInList = $inPackageIDs{$relatedID} ? "yes" : "no";
 
           if($relationType && $relationType ne ( 'Druckausg' || 'Druckausg.' )){
@@ -1339,7 +1359,7 @@ sub createJSON {
           && scalar @connectedIDs > 0
           && any {$_ eq $id} @connectedIDs
         ){
-          $usefulRelated++;
+          $pkgStats{'usefulRelated'}++;
           if($rEndYear){
             if($rEndYear < $start_year){ # Vorg.
               push @{ $titleInfo{'historyEvents'} } , {
@@ -1488,7 +1508,7 @@ sub createJSON {
               push @titleWarningsGVK , {
                 '009P0'=> $sourceURL
               };
-              $brokenURL++;
+              $pkgStats{'nlURLs'}++;
               $sourceURL =~ s/http\/\//http:\/\//;
             }
           }elsif($subField eq 'x'){
@@ -1507,7 +1527,7 @@ sub createJSON {
           next;
         }else{
           $noViableUrl = 0;
-          $nlURLs++;
+          $pkgStats{'nlURLs'}++;
         }
 
         $tipp{'status'} = "Current";
@@ -1529,7 +1549,7 @@ sub createJSON {
             push @titleWarningsZDB , {
               '009P0'=> $sourceURL
             };
-            $brokenURL++;
+            $pkgStats{'brokenURL'}++;
             next;
           }
         }else{
@@ -1540,7 +1560,7 @@ sub createJSON {
           push @titleWarningsZDB , {
             '009P0'=> $sourceURL
           };
-          $brokenURL++;
+          $pkgStats{'brokenURL'}++;
           next;
         }
 
@@ -1668,7 +1688,7 @@ sub createJSON {
 
       if($noViableUrl == 1){
         $numNoUrl++;
-        $numNoUrlPkg++;
+        $pkgStats{'numNoUrlPkg'}++;
         my $platformURL = URI->new( $knownSelection{$sigel}{'platformURL'} );
         my $platformHost = $platformURL->authority;
 
@@ -1681,8 +1701,8 @@ sub createJSON {
         push @{ $package{'tipps'} } , {
           'medium' => "Electronic",
           'platform' => {
-            'name' => $platformHost,
-            'primaryUrl' => $platformHost
+            'name' => $platformHost ? $platformHost : $provider,
+            'primaryUrl' => $platformHost ? $platformHost : $provider
           },
           'status' => "Current",
           'title' => {
@@ -1706,7 +1726,7 @@ sub createJSON {
       }
 
       $titlesTotal++;
-      $titlesTotalPkg++;
+      $pkgStats{'titlesTotalPkg'}++;
 
       # -------------------- Collect IDs --------------------
 
@@ -1725,68 +1745,68 @@ sub createJSON {
         push @allTitles , \%titleInfo;
       }else{
         say "ID ".$id." ist bereits in der Titelliste vorhanden!";
-        $duplicateZDBids++;
+        $pkgStats{'duplicateZDBids'}++;
       }
     } ## End TitleInstance
 
     $authorityNotes{$knownSelection{$sigel}{'authority'}}{$sigel}{'stats'} = {
-      'numJournals' => $titlesTotalPkg,
-      'dupeISSN' => $duplicateISSNsPkg,
-      'dupeZDB' => $duplicateZDBids,
-      'noISSN' => $noISSNPkg,
-      'wrongISSN' => $wrongISSNPkg,
-      'pubFromGnd' => $pubFromGndPkg,
-      'pubFromAuthor' => $pubFromAuthorPkg,
-      'pubFromCorp' => $pubFromCorpPkg,
-      'noURL' => $numNoUrlPkg,
-      'noPubMatch' => $noPubMatchPkg,
-      'noPubGivenPkg' => $noPubGivenPkg,
-      'correctedAbbrs' => $correctedAbbrs,
-      'relDatesInD' => $relDatesInD,
-      'usefulRelated' => $usefulRelated,
-      'possibleRelations' => $possibleRelations,
-      'numViableURLs' => $nlURLs,
-      'brokenURL' => $brokenURL
+      'numJournals' => $pkgStats{'titlesTotalPkg'},
+      'dupeISSN' => $pkgStats{'duplicateISSNsPkg'},
+      'dupeZDB' => $pkgStats{'duplicateZDBids'},
+      'noISSN' => $pkgStats{'noISSNPkg'},
+      'wrongISSN' => $pkgStats{'wrongISSNPkg'},
+      'pubFromGnd' => $pkgStats{'pubFromGndPkg'},
+      'pubFromAuthor' => $pkgStats{'pubFromAuthorPkg'},
+      'pubFromCorp' => $pkgStats{'pubFromCorpPkg'},
+      'noURL' => $pkgStats{'numNoUrlPkg'},
+      'noPubMatch' => $pkgStats{'noPubMatchPkg'},
+      'noPubGivenPkg' => $pkgStats{'noPubGivenPkg'},
+      'correctedAbbrs' => $pkgStats{'correctedAbbrs'},
+      'relDatesInD' => $pkgStats{'relDatesInD'},
+      'usefulRelated' => $pkgStats{'usefulRelated'},
+      'possibleRelations' => $pkgStats{'possibleRelations'},
+      'numViableURLs' => $pkgStats{'nlURLs'},
+      'brokenURL' => $pkgStats{'brokenURL'}
     };
 
     $authorityNotesGVK{$knownSelection{$sigel}{'authority'}}{$sigel}{'stats'} = {
-      'numJournals' => $titlesTotalPkg,
-      'dupeISSN' => $duplicateISSNsPkg,
-      'dupeZDB' => $duplicateZDBids,
-      'noISSN' => $noISSNPkg,
-      'wrongISSN' => $wrongISSNPkg,
-      'pubFromGnd' => $pubFromGndPkg,
-      'pubFromAuthor' => $pubFromAuthorPkg,
-      'pubFromCorp' => $pubFromCorpPkg,
-      'noURL' => $numNoUrlPkg,
-      'noPubMatch' => $noPubMatchPkg,
-      'noPubGivenPkg' => $noPubGivenPkg,
-      'correctedAbbrs' => $correctedAbbrs,
-      'relDatesInD' => $relDatesInD,
-      'usefulRelated' => $usefulRelated,
-      'possibleRelations' => $possibleRelations,
-      'numViableURLs' => $nlURLs,
-      'brokenURL' => $brokenURL
+      'numJournals' => $pkgStats{'titlesTotalPkg'},
+      'dupeISSN' => $pkgStats{'duplicateISSNsPkg'},
+      'dupeZDB' => $pkgStats{'duplicateZDBids'},
+      'noISSN' => $pkgStats{'noISSNPkg'},
+      'wrongISSN' => $pkgStats{'wrongISSNPkg'},
+      'pubFromGnd' => $pkgStats{'pubFromGndPkg'},
+      'pubFromAuthor' => $pkgStats{'pubFromAuthorPkg'},
+      'pubFromCorp' => $pkgStats{'pubFromCorpPkg'},
+      'noURL' => $pkgStats{'numNoUrlPkg'},
+      'noPubMatch' => $pkgStats{'noPubMatchPkg'},
+      'noPubGivenPkg' => $pkgStats{'noPubGivenPkg'},
+      'correctedAbbrs' => $pkgStats{'correctedAbbrs'},
+      'relDatesInD' => $pkgStats{'relDatesInD'},
+      'usefulRelated' => $pkgStats{'usefulRelated'},
+      'possibleRelations' => $pkgStats{'possibleRelations'},
+      'numViableURLs' => $pkgStats{'nlURLs'},
+      'brokenURL' => $pkgStats{'brokenURL'}
     };
 
     $authorityNotesZDB{$knownSelection{$sigel}{'authority'}}{$sigel}{'stats'} = {
-      'numJournals' => $titlesTotalPkg,
-      'dupeISSN' => $duplicateISSNsPkg,
-      'dupeZDB' => $duplicateZDBids,
-      'noISSN' => $noISSNPkg,
-      'wrongISSN' => $wrongISSNPkg,
-      'pubFromGnd' => $pubFromGndPkg,
-      'pubFromAuthor' => $pubFromAuthorPkg,
-      'pubFromCorp' => $pubFromCorpPkg,
-      'noURL' => $numNoUrlPkg,
-      'noPubMatch' => $noPubMatchPkg,
-      'noPubGivenPkg' => $noPubGivenPkg,
-      'correctedAbbrs' => $correctedAbbrs,
-      'relDatesInD' => $relDatesInD,
-      'usefulRelated' => $usefulRelated,
-      'possibleRelations' => $possibleRelations,
-      'numViableURLs' => $nlURLs,
-      'brokenURL' => $brokenURL
+      'numJournals' => $pkgStats{'titlesTotalPkg'},
+      'dupeISSN' => $pkgStats{'duplicateISSNsPkg'},
+      'dupeZDB' => $pkgStats{'duplicateZDBids'},
+      'noISSN' => $pkgStats{'noISSNPkg'},
+      'wrongISSN' => $pkgStats{'wrongISSNPkg'},
+      'pubFromGnd' => $pkgStats{'pubFromGndPkg'},
+      'pubFromAuthor' => $pkgStats{'pubFromAuthorPkg'},
+      'pubFromCorp' => $pkgStats{'pubFromCorpPkg'},
+      'noURL' => $pkgStats{'numNoUrlPkg'},
+      'noPubMatch' => $pkgStats{'noPubMatchPkg'},
+      'noPubGivenPkg' => $pkgStats{'noPubGivenPkg'},
+      'correctedAbbrs' => $pkgStats{'correctedAbbrs'},
+      'relDatesInD' => $pkgStats{'relDatesInD'},
+      'usefulRelated' => $pkgStats{'usefulRelated'},
+      'possibleRelations' => $pkgStats{'possibleRelations'},
+      'numViableURLs' => $pkgStats{'nlURLs'},
+      'brokenURL' => $pkgStats{'brokenURL'}
     };
 
     if($filter){
