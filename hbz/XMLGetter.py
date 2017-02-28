@@ -31,7 +31,7 @@ class Institution:
 	sigel = ''
 	#ezb_id
 	subscriper_group = ''
-	#uid
+	uid = ''
 	#mtime
 	#status
 
@@ -93,6 +93,8 @@ class XMLGetter:
 					inst.url = self.norm(instRow['URL'])
 				if instRow['ISIL']:
 					inst.sigel = self.norm(instRow['ISIL'])
+				if instRow['UID']:
+					inst.uid = self.norm(instRow['UID'])
 
 				if instRow['Sigel']:
 					cur.execute("SELECT * FROM Ansprechpartner WHERE Teilnehmer_Sigel = '" + instRow['Sigel'] + "'")
