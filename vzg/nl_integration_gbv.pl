@@ -1418,17 +1418,6 @@ sub createJSON {
                 }
               }
             }
-            if($isDirectRelation == 0){
-              say "no connected relation!";
-              push @titleWarnings, {
-                '039E' => $relatedID,
-                'comment' => "Titel ist nicht beidseitig verknüpft!"
-              };
-              push @titleWarningsZDB, {
-                '039E' => $relatedID,
-                'comment' => "Titel ist nicht beidseitig verknüpft!"
-              };
-            }
 
             my $isInList = $inPackageIDs{$relatedID} ? "yes" : "no";
 
@@ -1440,6 +1429,17 @@ sub createJSON {
             ){
               @connectedIDs = @{ $globalIDs{$relatedID}{'connected'} };
             }
+          }
+          if($isDirectRelation == 0){
+            say "no connected relation!";
+            push @titleWarnings, {
+              '039E' => $relatedID,
+              'comment' => "Titel ist nicht beidseitig verknüpft!"
+            };
+            push @titleWarningsZDB, {
+              '039E' => $relatedID,
+              'comment' => "Titel ist nicht beidseitig verknüpft!"
+            };
           }
         }
         if(  $relatedID
