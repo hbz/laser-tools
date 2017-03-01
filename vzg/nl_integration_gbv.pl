@@ -46,6 +46,7 @@ use Catmandu::Importer::SRU::Parser::ppxml;
 use Catmandu::Importer::SRU::Parser::picaxml;
 use Data::Dumper;
 use PICA::Data ':all';
+use Algorithm::CheckDigits;
 
 # Config
 
@@ -576,8 +577,10 @@ sub createJSON {
       'correctedAbbrs' => 0,
       'relDatesInD' => 0,
       'usefulRelated' => 0,
+      'nonNlRelation' => 0,
       'possibleRelations' => 0,
       'nlURLs' => 0,
+      'otherURLs' => 0,
       'brokenURL' => 0,
       'doiPkg' => 0
     );
@@ -1166,6 +1169,24 @@ sub createJSON {
             $pkgStats{'correctedAbbrs'}++;
           }
 
+          if($tempPub =~ /(^|\s)[Vv]erl\.?(\s$)/){
+
+            $tempPub =~ s/(^|\s)([Vv]erl)\.?(\s|$)/$1Verlag$3/g;
+            $pkgStats{'correctedAbbrs'}++;
+          }
+
+          if($tempPub =~ /(^|\s)[Aa]kad\.?(\s$)/){
+
+            $tempPub =~ s/(^|\s)([Aa]kad)\.?(\s|$)/$1Akademie$3/g;
+            $pkgStats{'correctedAbbrs'}++;
+          }
+
+          if($tempPub =~ /(^|\s)[Vv]erb\.?(\s$)/){
+
+            $tempPub =~ s/(^|\s)([Vv]erb)\.?(\s|$)/$1Verband$3/g;
+            $pkgStats{'correctedAbbrs'}++;
+          }
+
           ## Verlag verifizieren & hinzufügen
 
           my $ncsuPub = searchNcsuOrgs($tempPub);
@@ -1273,9 +1294,16 @@ sub createJSON {
         my $relatedID;
         my @connectedIDs;
         my $relatedDates;
+        my $relIsNl = 0;
+        my $isDirectRelation = 0;
         my $rStartYear;
         my $rEndYear;
         my $subfPos = 0;
+        my %relObj = (
+          'title' => "",
+          'identifiers' => []
+        );
+
         foreach my $subField (@relTitle){
           if($subField eq 'c'){
 
@@ -1339,135 +1367,187 @@ sub createJSON {
         }
         if($relatedID){
           $pkgStats{'possibleRelations'}++;
-          my $isInList = $inPackageIDs{$relatedID} ? "yes" : "no";
 
-          if($relationType && $relationType ne ( 'Druckausg' || 'Druckausg.' )){
-            push @relatedPrev, $relatedID;
+          my $relQryString = 'pica.zdb='.$relatedID;
+          if($onlyJournals == 1){
+            $relQryString .= ' and (pica.mak=Ob* or pica.mak=Od*)';
           }
-          if(  $globalIDs{$relatedID}
-            && ref($globalIDs{$relatedID}{'connected'}) eq 'ARRAY'
-          ){
-            @connectedIDs = @{ $globalIDs{$relatedID}{'connected'} };
+          my %attrs = (
+            base => 'http://sru.gbv.de/gvk',
+            query => $relQryString,
+            recordSchema => 'picaxml',
+            parser => 'picaxml',
+            _max_results => 5
+          );
+
+          my $sruRel = Catmandu::Importer::SRU->new(%attrs)
+            or die "Abfrage über ".$attrs{'base'}." fehlgeschlagen!\n";
+
+          my $relRecord = $sruRel->first();
+          if($relRecord){
+            if(pica_value($relRecord, '008E')){
+              my @relISIL = pica_values($relRecord, '008E');
+              foreach my $relISIL (@relISIL){
+                if($knownSelection{$relISIL}){
+                  $relIsNl = 1;
+                }
+              }
+            }
+            if(pica_value($relRecord, '039E')){
+              my @relRelatedTitles = @{ pica_fields($relRecord, '039E') };
+              foreach my $relRelatedTitle (@relRelatedTitles){
+                my @rt = @{ $relRelatedTitle };
+                my $rSubfPos = 0;
+                foreach my $subField (@rt){
+                  if($subField eq 'ZDB' && $rt[$rSubfPos+1] eq '6'){
+                    my $rID = formatZdbId($rt[$rSubfPos+2]);
+                    if($rID && $rID eq $id){
+                      $isDirectRelation = 1;
+                    }
+                  }
+                  $rSubfPos++;
+                }
+              }
+              $relObj{'title'} = $relName ? $relName : "";
+              push $relObj{'identifiers'}, { 'type' => "zdb", 'value' => $relatedID };
+
+              if(pica_value($relRecord, '005A0')){
+                my $formatedRelISSN = formatISSN(pica_value($relRecord, '005A0'));
+                if($formatedRelISSN ne ""){
+                  push $relObj{'identifiers'}, { 'type' => "eissn", 'value' => $formatedRelISSN }
+                }
+              }
+            }
+            if($isDirectRelation == 0){
+              say "no connected relation!";
+              push @titleWarnings, {
+                '039E' => $relatedID,
+                'comment' => "Titel ist nicht beidseitig verknüpft!"
+              };
+              push @titleWarningsZDB, {
+                '039E' => $relatedID,
+                'comment' => "Titel ist nicht beidseitig verknüpft!"
+              };
+            }
+
+            my $isInList = $inPackageIDs{$relatedID} ? "yes" : "no";
+
+            if($relationType && $relationType ne ( 'Druckausg' || 'Druckausg.' )){
+              push @relatedPrev, $relatedID;
+            }
+            if(  $globalIDs{$relatedID}
+              && ref($globalIDs{$relatedID}{'connected'}) eq 'ARRAY'
+            ){
+              @connectedIDs = @{ $globalIDs{$relatedID}{'connected'} };
+            }
           }
         }
         if(  $relatedID
           && $relationType
-          && $relationType ne 'Druckausg'
-          && $relationType ne 'Druckausg.'
-          && $globalIDs{$relatedID}
-          && $rStartYear
-          && scalar @connectedIDs > 0
-          && any {$_ eq $id} @connectedIDs
+          && $relationType !~ /Druckausg/
+          && $isDirectRelation == 1
         ){
+          say "Adding relation to $relatedID";
+          say "RelType: $relationType";
           $pkgStats{'usefulRelated'}++;
-          if($rEndYear){
-            if($rEndYear < $start_year){ # Vorg.
-              push @{ $titleInfo{'historyEvents'} } , {
-                  'date' => convertToTimeStamp($start_year, 0),
-                  'from' => [{
-                      'title' => $relName ? $relName : "",
-                      'identifiers' => [{
-                          'type' => "zdb",
-                          'value' => $relatedID
-                      }]
-                  }],
-                  'to' => [{
-                      'title' => $titleInfo{'name'},
-                      'identifiers' => $titleInfo{'identifiers'}
-                  }]
-              };
-            }else{
-              if($end_year != 0){
-                if($rEndYear <= $end_year){ # Vorg.
+          if($relIsNl == 0){
+            $pkgStats{'nonNlRelation'}++;
+            say "Related title not in NL: $relatedID!";
+            unless(any {$_ eq $relatedID} @unknownRelIds){
+              push @unknownRelIds, $relatedID;
+            }
+          }
+          if(any {$_ eq $relationType} ['Vorg.','Darin aufgeg.','Hervorgeg. aus']){
+            push @{ $titleInfo{'historyEvents'} } , {
+                'date' => convertToTimeStamp($start_year, 0),
+                'from' => [\%relObj],
+                'to' => [{
+                    'title' => $titleInfo{'name'},
+                    'identifiers' => $titleInfo{'identifiers'}
+                }]
+            };
+          }elsif(any { $_ eq $relationType } ['Nachf.','Aufgeg. in','Fortgesetzt durch']){
+            push @{ $titleInfo{'historyEvents'} } , {
+                'date' => convertToTimeStamp($end_year, 1),
+                'to' => [\%relObj],
+                'from' => [{
+                    'title' => $titleInfo{'name'},
+                    'identifiers' => $titleInfo{'identifiers'}
+                }]
+            };
+          }elsif($rStartYear){
+            if($rEndYear){
+              if($rEndYear < $start_year){ # Vorg.
+                push @{ $titleInfo{'historyEvents'} } , {
+                    'date' => convertToTimeStamp($start_year, 0),
+                    'from' => [\%relObj],
+                    'to' => [{
+                        'title' => $titleInfo{'name'},
+                        'identifiers' => $titleInfo{'identifiers'}
+                    }]
+                };
+              }else{
+                if($end_year != 0){
+                  if($rEndYear <= $end_year){ # Vorg.
+                    push @{ $titleInfo{'historyEvents'} } , {
+                        'date' => convertToTimeStamp($rEndYear, 1),
+                        'from' => [%relObj],
+                        'to' => [{
+                            'title' => $titleInfo{'name'},
+                            'identifiers' => $titleInfo{'identifiers'}
+                        }]
+                    };
+                  }else{ # Nachf.
+                    push @{ $titleInfo{'historyEvents'} } , {
+                        'date' => convertToTimeStamp($end_year, 1),
+                        'to' => [\%relObj],
+                        'from' => [{
+                            'title' => $titleInfo{'name'},
+                            'identifiers' => $titleInfo{'identifiers'}
+                        }]
+                    };
+                  }
+                }else{ # Vorg.
                   push @{ $titleInfo{'historyEvents'} } , {
                       'date' => convertToTimeStamp($rEndYear, 1),
-                      'from' => [{
-                          'title' => $relName ? $relName : "",
-                          'identifiers' => [{
-                              'type' => "zdb",
-                              'value' => $relatedID
-                          }]
-                      }],
+                      'from' => [\%relObj],
                       'to' => [{
-                          'title' => $titleInfo{'name'},
-                          'identifiers' => $titleInfo{'identifiers'}
-                      }]
-                  };
-                }else{ # Nachf.
-                  push @{ $titleInfo{'historyEvents'} } , {
-                      'date' => convertToTimeStamp($end_year, 1),
-                      'to' => [{
-                          'title' => $relName ? $relName : "",
-                          'identifiers' => [{
-                              'type' => "zdb",
-                              'value' => $relatedID
-                          }]
-                      }],
-                      'from' => [{
                           'title' => $titleInfo{'name'},
                           'identifiers' => $titleInfo{'identifiers'}
                       }]
                   };
                 }
-              }else{ # Vorg.
+              }
+            }else{
+              if($end_year != 0){ # Nachf.
                 push @{ $titleInfo{'historyEvents'} } , {
-                    'date' => convertToTimeStamp($rEndYear, 1),
+                    'date' => convertToTimeStamp($end_year, 1),
+                    'to' => [\%relObj],
                     'from' => [{
-                        'title' => $relName ? $relName : "",
-                        'identifiers' => [{
-                            'type' => "zdb",
-                            'value' => $relatedID
-                        }]
-                    }],
-                    'to' => [{
                         'title' => $titleInfo{'name'},
                         'identifiers' => $titleInfo{'identifiers'}
                     }]
                 };
+                if($rStartYear && $rStartYear < $start_year){ # Vorg.
+                  push @{ $titleInfo{'historyEvents'} } , {
+                      'date' => convertToTimeStamp($start_year, 0),
+                      'from' => [\%relObj],
+                      'to' => [{
+                          'title' => $titleInfo{'name'},
+                          'identifiers' => $titleInfo{'identifiers'}
+                      }]
+                  };
+                }
+              }else{
+                say "Konnte Verknüpfungstyp in $id nicht identifizieren:";
+                say "Titel: $start_year-".($end_year != 0 ? $end_year : "");
+                say "Verknüpft: ".($rStartYear ? $rStartYear : "")."-".($rEndYear ? $rEndYear : "");
               }
             }
           }else{
-            if($end_year != 0){ # Nachf.
-              push @{ $titleInfo{'historyEvents'} } , {
-                  'date' => convertToTimeStamp($end_year, 1),
-                  'to' => [{
-                      'title' => $relName ? $relName : "",
-                      'identifiers' => [{
-                          'type' => "zdb",
-                          'value' => $relatedID
-                      }]
-                  }],
-                  'from' => [{
-                      'title' => $titleInfo{'name'},
-                      'identifiers' => $titleInfo{'identifiers'}
-                  }]
-              };
-              if($rStartYear < $start_year){ # Vorg.
-                push @{ $titleInfo{'historyEvents'} } , {
-                    'date' => convertToTimeStamp($start_year, 0),
-                    'from' => [{
-                        'title' => $relName ? $relName : "",
-                        'identifiers' => [{
-                            'type' => "zdb",
-                            'value' => $relatedID
-                        }]
-                    }],
-                    'to' => [{
-                        'title' => $titleInfo{'name'},
-                        'identifiers' => $titleInfo{'identifiers'}
-                    }]
-                };
-              }
-            }else{
-              say "Konnte Verknüpfungstyp in $id nicht identifizieren:";
-              say "Titel: $start_year-".($end_year != 0 ? $end_year : "");
-              say "Verknüpft: $rStartYear-".($rEndYear ? $rEndYear : "");
-            }
-          }
-        }elsif($relatedID && !$globalIDs{$relatedID}){
-          say "Unknown connected ID $relatedID!";
-          unless(any {$_ eq $relatedID} @unknownRelIds){
-            push @unknownRelIds, $relatedID;
+            say "Konnte Verknüpfungstyp in $id nicht identifizieren:";
+            say "Titel: $start_year-".($end_year != 0 ? $end_year : "");
+            say "Verknüpft: ".($rStartYear ? $rStartYear : "")."-".($rEndYear ? $rEndYear : "");
           }
         }
       }
@@ -1524,6 +1604,7 @@ sub createJSON {
           next;
         }
         if($publicComments ne "Deutschlandweit zugänglich"){
+          $pkgStats{'otherURLs'}++;
           next;
         }else{
           $noViableUrl = 0;
@@ -1543,24 +1624,24 @@ sub createJSON {
         if($url->has_recognized_scheme){
           $host = $url->authority;
           if(!$host){
+            $pkgStats{'brokenURL'}++;
             push @titleWarnings , {
               '009P0'=> $sourceURL
             };
             push @titleWarningsZDB , {
               '009P0'=> $sourceURL
             };
-            $pkgStats{'brokenURL'}++;
             next;
           }
         }else{
           say "Looks like a wrong URL > ".$id;
+          $pkgStats{'brokenURL'}++;
           push @titleWarnings , {
             '009P0'=> $sourceURL
           };
           push @titleWarningsZDB , {
             '009P0'=> $sourceURL
           };
-          $pkgStats{'brokenURL'}++;
           next;
         }
 
@@ -1765,8 +1846,10 @@ sub createJSON {
       'relDatesInD' => $pkgStats{'relDatesInD'},
       'usefulRelated' => $pkgStats{'usefulRelated'},
       'possibleRelations' => $pkgStats{'possibleRelations'},
+      'nonNlRelation' => $pkgStats{'nonNlRelation'},
       'numViableURLs' => $pkgStats{'nlURLs'},
-      'brokenURL' => $pkgStats{'brokenURL'}
+      'brokenURL' => $pkgStats{'brokenURL'},
+      'otherURLs' => $pkgStats{'otherURLs'}
     };
 
     $authorityNotesGVK{$knownSelection{$sigel}{'authority'}}{$sigel}{'stats'} = {
@@ -1785,8 +1868,10 @@ sub createJSON {
       'relDatesInD' => $pkgStats{'relDatesInD'},
       'usefulRelated' => $pkgStats{'usefulRelated'},
       'possibleRelations' => $pkgStats{'possibleRelations'},
+      'nonNlRelation' => $pkgStats{'nonNlRelation'},
       'numViableURLs' => $pkgStats{'nlURLs'},
-      'brokenURL' => $pkgStats{'brokenURL'}
+      'brokenURL' => $pkgStats{'brokenURL'},
+      'otherURLs' => $pkgStats{'otherURLs'}
     };
 
     $authorityNotesZDB{$knownSelection{$sigel}{'authority'}}{$sigel}{'stats'} = {
@@ -1805,8 +1890,10 @@ sub createJSON {
       'relDatesInD' => $pkgStats{'relDatesInD'},
       'usefulRelated' => $pkgStats{'usefulRelated'},
       'possibleRelations' => $pkgStats{'possibleRelations'},
+      'nonNlRelation' => $pkgStats{'nonNlRelation'},
       'numViableURLs' => $pkgStats{'nlURLs'},
-      'brokenURL' => $pkgStats{'brokenURL'}
+      'brokenURL' => $pkgStats{'brokenURL'},
+      'otherURLs' => $pkgStats{'otherURLs'}
     };
 
     if($filter){
@@ -1943,7 +2030,12 @@ sub formatISSN {
       $issn = join('-', unpack('a4 a4', $issn));
     }
     $issn =~ s/x/X/g;
-    return $issn;
+    $issnChk = CheckDigits('issn');
+    if($issnChk->is_valid($issn)){
+      return $issn;
+    }else{
+      return "";
+    }
   }else{
     return "";
   }
