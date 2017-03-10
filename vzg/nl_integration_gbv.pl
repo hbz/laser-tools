@@ -317,7 +317,7 @@ sub getZdbName {
         $pkgInfos{'name'} = substr($messyName, 0, $bracketPos-1);
         $pkgInfos{'name'} =~ s/^\s+|\s+$//g;
 
-        $pkgInfos{'$provider'} = pica_value($packageInstance, '035Pg')
+        $pkgInfos{'provider'} = pica_value($packageInstance, '035Pg')
           ? pica_value($packageInstance, '035Pg')
           : "";
 
@@ -326,6 +326,7 @@ sub getZdbName {
           $pkgInfos{'provider'} =~ s/^\s+|\s+$//g;
           $pkgInfos{'platform'} =~ s/^\s+|\s+$//g;
         }
+
         if(pica_value($packageInstance, '009Qu')){
           my @pUrls = @{ pica_fields($packageInstance, '009Q') };
 
@@ -351,7 +352,7 @@ sub getZdbName {
         }
 
         if(index($pkgInfos{'provider'}, "(") >= 0){
-          $pkgInfos{'provider'} = substr($pkgInfos{'provider'}, 0, index($pkgInfos{'provider'}, "(")-1);
+          $pkgInfos{'provider'} = substr($pkgInfos{'provider'}, 0, index  ($pkgInfos{'provider'}, "(")-1);
         }
 
         $pkgInfos{'authority'} = pica_value($packageInstance, '032Pa')
@@ -1449,6 +1450,8 @@ sub createJSON {
             my $subfPos = 0;
             my $preCorrectedPub = "";
             my $pubName;
+            my $isParent = 0;
+            my $branch;
             my $ncsuPub;
             my $authType;
             my $gndID;
@@ -1471,8 +1474,15 @@ sub createJSON {
                 $authType = substr($pub[$subfPos+1],0,2);
               }elsif($subField eq '0'){
                 $gndID = $pub[$subfPos+1];
+              }elsif($subField eq 'b'){
+                $branch = $pub[$subfPos+1];
+                $isParent = 1;
               }
               $subfPos++;
+            }
+            if($isParent == 1){
+              say "Parent: $pubName, Child: $branch";
+              next;
             }
 
             if($authType eq 'Tb' && $gndID){
@@ -2415,9 +2425,12 @@ sub createJSON {
   # Submit new Orgs to GOKb
 
   my $skippedOrgs = 0;
+  my $numNewOrgs = scalar keys %orgsToAdd;
 
   if($postData == 1 && $newOrgs == 1){
     sleep 3;
+
+    say "Submitting $numNewOrgs Orgs to GOKb (".$gokbCreds{'base'}.")";
 
     foreach my $org (keys %orgsToAdd){
       my %curOrg = %{ $orgsToAdd{$org} };
@@ -2462,7 +2475,7 @@ sub createJSON {
   say "Run finished at $finishedRun";
   say "Runtime: $timeElapsed";
   say "$titlesTotal relevante Titel in $packagesTotal Paketen";
-  say "$numNoUrl Titel ohne NL-URL";
+  say "$numNoUrl Titel ohne relevante URL";
   say "$duplicateISSNs ZDB-ID-Änderungen ohne ISSN-Anpassung";
   say "$wrongISSN eISSNs als Parallel-ISSN (005P0)";
   say "$noPubGiven Titel ohne Verlag (033An)";
