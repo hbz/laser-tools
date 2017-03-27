@@ -93,7 +93,7 @@ my $onlyJournals = 1;
 
 ## Name der JSON-Datei mit Paketinformationen
 
-my $knownSeals = 'NL_Pakete.json';
+my $knownSeals = 'AL_Pakete.json';
 
 ## Standard-URL der Ziel-GOKb
 
@@ -219,7 +219,7 @@ if($argP >= 0){
       die "Erstelle keine JSONs, Sigeldatei wurde nicht erstellt!";
     }
   }else{
-      say "Erstelle nur Paketdatei!";
+      say "Erstelle nur Paketdatei $knownSeals!";
 
       getSeals($cmsCreds{'base'},$cmsCreds{'username'},$cmsCreds{'password'});
   }
@@ -275,7 +275,9 @@ if(scalar @ARGV == 0 || (!$argJ && !$argP)){
   say STDOUT "Mögliche Parameter sind:";
   say STDOUT "'--packages \"data_source,username,password\"'";
   say STDOUT "'--json [\"Sigel\"]'";
+  say STDOUT "'--endpoint_zdb'";
   say STDOUT "'--post [\"URL\"]'";
+  say STDOUT "'--new_orgs'";
 }
 
 # Query Sigelverzeichnis via SRU for package metadata
@@ -296,10 +298,10 @@ sub getZdbName {
   );
 
   my %attrs = (
-      base => 'http://services.dnb.de/sru/bib',
-      query => 'woe='.$sig,
-      recordSchema => 'PicaPlus-xml',
-      parser => 'ppxml'
+      base => 'http://sru.gbv.de/isil',
+      query => 'pica.isi='.$sig,
+      recordSchema => 'picaxml',
+      parser => 'picaxml'
   );
   my $importer = Catmandu::Importer::SRU->new(%attrs)
     or die " - Abfrage über ".$attrs{'base'}." fehlgeschlagen!\n";
@@ -394,7 +396,7 @@ sub getSeals {
   my $stmt = qq(select zuid,
     seal as sigel
     FROM lmodels
-    WHERE meta_type = 'NLLicenceModelStandard'
+    WHERE meta_type = 'NLLicenceModelOptIn'
     AND wf_state='published';
   );
 
@@ -431,7 +433,7 @@ sub getSeals {
   while(my @row = $sth->fetchrow_array()) {
     my ($zuid, $pkgSigel) = @row;
 
-    if($pkgSigel ne 'ZDB-1-TEST'){
+    if($pkgSigel && $pkgSigel =~ /^ZDB-[0-9]+-[a-zA-Z]+$/ && $pkgSigel ne 'ZDB-1-TEST'){
       my %pkgInfos = getZdbName($pkgSigel);
 
       my %pkg = (
@@ -448,7 +450,6 @@ sub getSeals {
         orgStats => {
           'numValidSig' => 0,
           'numOhneSig' => 0,
-          'numCorrectSig' => 0,
           'numWrongSig' => 0
         }
       );
@@ -462,33 +463,72 @@ sub getSeals {
         my $orgName = $orgRow[1];
         my $orgSigel = $orgRow[2] ? $orgRow[2] : undef;
         my $orgWibID = $orgRow[3];
-        my $fixedSigel = undef;
+        my $isil = undef;
+        my $hasError = 0;
+        my $tempISIL;
 
         ### Verify Seals
 
-        unless(!$orgSigel || $orgSigel =~ /^DE\-[a-zA-Z0-9üäöÜÄÖ]*$/){
-          if($orgSigel =~ /^\s?[a-zA-Z0-9üäöÜÄÖ]+\s?[a-zA-Z0-9üäöÜÄÖ]*\s?$/){
-            $fixedSigel = $orgSigel;
-            $fixedSigel =~ s/\s//g;
-            $fixedSigel = "DE-".$fixedSigel;
+        unless(!$orgSigel || $orgSigel =~ /^DE\-[a-zA-Z0-9üäöÜÄÖ]+-?[0-9]$/){
 
-            # Too many Timeouts, disabling SRU verification for now...
+          $tempISIL = $orgSigel;
+          $tempISIL =~ s/^\s+|\s+$//g;
+          $tempISIL =~ s/ü/ue/g;
+          $tempISIL =~ s/ä/ae/g;
+          $tempISIL =~ s/ö/oe/g;
 
-#             my %bibAttrs = (
-#                 base => 'http://services.dnb.de/sru/bib',
-#                 query => 'woe='.$fixedSigel,
-#                 recordSchema => 'PicaPlus-xml',
-#                 parser => 'ppxml'
-#             );
-#             my $orgImporter = Catmandu::Importer::SRU->new(%bibAttrs)
-#               or die "Abfrage über ".$bibAttrs{'base'}." fehlgeschlagen!\n";
-#             my $sruOrg = $orgImporter->first();
-#             if($sruOrg){
-#               $pkg{'orgStats'}{'numValidSig'}++;
-#             }else{
-#               $fixedSigel = undef;
-#             }
-            $pkg{'orgStats'}{'numValidSig'}++;
+          if($tempISIL =~ /^[\w\d]+[\/\s\-]?[\w\d]*$/){
+
+            unless($tempISIL =~ /^DE-/){
+              $tempISIL = "DE-".$tempISIL;
+
+              if($tempISIL =~ /^\w+[\/\s\-]?\d+\w*\/?\d?$/){
+
+                $tempISIL =~ s/^(\w+)([\/\s\-]?)(\d+\/?\w*\/?\d?)$/$1$3/g;
+                $tempISIL =~ s/\//-/g;
+
+              }elsif($tempISIL =~ /^\d+\/?[\d\w]*/){
+
+                if($tempISIL =~ /^\d+\w*$/){
+
+                }elsif($tempISIL =~ /^\d+\/[\d\w]+$/){
+
+                  $tempISIL =~ s/\//-/g;
+
+                }else{
+
+                  $hasError = 1;
+
+                }
+              }else{
+
+                $hasError = 1;
+
+              }
+            }
+
+            if($hasError == 0){
+              my %bibAttrs = (
+                  base => 'http://sru.gbv.de/isil',
+                  query => 'pica.isi='.$tempISIL,
+                  recordSchema => 'PicaPlus-xml',
+                  parser => 'ppxml'
+              );
+
+              my $orgImporter = Catmandu::Importer::SRU->new(%bibAttrs)
+                or die "Abfrage über ".$bibAttrs{'base'}." fehlgeschlagen!\n";
+
+              my $sruOrg = $orgImporter->first();
+
+              if($sruOrg){
+                $pkg{'orgStats'}{'numValidSig'}++;
+                $isil = $tempISIL;
+              }else{
+                $pkg{'orgStats'}{'numWrongSig'}++;
+              }
+            }else{
+              $pkg{'orgStats'}{'numWrongSig'}++;
+            }
           }else{
             $pkg{'orgStats'}{'numWrongSig'}++;
           }
@@ -496,15 +536,12 @@ sub getSeals {
 
         if(!$orgSigel){
           $pkg{'orgStats'}{'numOhneSig'}++;
-        }elsif($orgSigel =~ /^DE\-[a-zA-Z0-9üäöÜÄÖ]*$/){
-          $fixedSigel = $orgSigel;
-          $pkg{'orgStats'}{'numCorrectSig'}++;
         }
 
         push @{ $pkg{'cmsOrgs'} }, {
             'name' => $orgName,
             'sigel' => $orgSigel,
-            'fixedSigel' => $fixedSigel,
+            'isil' => $isil,
             'wibID' => $orgWibID,
             'zuid' => $orgZuid
         };
@@ -512,11 +549,11 @@ sub getSeals {
       $pkg{'orgStats'}{'numCms'} = scalar @{ $pkg{'cmsOrgs'} };
 
       my %zdbAttrs = (
-          base => 'http://services.dnb.de/sru/zdb',
-          query => 'isil='.$pkgSigel,
-          recordSchema => 'PicaPlus-xml',
+          base => 'http://sru.gbv.de/zdbdb',
+          query => 'pica.isl='.$pkgSigel,
+          recordSchema => 'picaxml',
           _max_results => 1,
-          parser => 'ppxml'
+          parser => 'picaxml'
       );
       my $titleImporter = Catmandu::Importer::SRU->new(%zdbAttrs)
         or die " - Abfrage über ".$zdbAttrs{'base'}." fehlgeschlagen!\n";
@@ -537,6 +574,8 @@ sub getSeals {
       }
 
       sleep 1;
+    }else{
+      say "Kein Paketsigel oder falsches Format in zuid: $zuid.";
     }
   };
   $dbh->disconnect;
@@ -777,7 +816,7 @@ sub createJSON {
       );
     }elsif($endpoint eq 'zdb'){
       %pkgSource = (
-        url => "http://services.dnb.de/sru/zdb",
+        url => "http://sru.gbv.de/zdbdb",
         name => "ZDB-SRU",
         normname => "ZDB_SRU"
       );
@@ -789,7 +828,7 @@ sub createJSON {
       additionalProperties => [],
       variantNames => [ $sigel ],
       scope => "",
-      listStatus => "Checked",
+      listStatus => "In Progress",
       breakable => "No",
       consistent => "Yes",
       fixed => "Yes",
@@ -823,13 +862,13 @@ sub createJSON {
         _max_results => 5
       );
     }elsif($endpoint eq "zdb"){
-      my $qryString = 'isil='.$sigel;
+      my $qryString = 'pica.isl='.$sigel;
 
       %attrs = (
-        base => 'http://services.dnb.de/sru/zdb',
+        base => 'http://sru.gbv.de/zdbdb',
         query => $qryString,
-        recordSchema => 'PicaPlus-xml',
-        parser => 'ppxml',
+        recordSchema => 'picaxml',
+        parser => 'picaxml',
         _max_results => 5
       );
     }
@@ -1288,6 +1327,7 @@ sub createJSON {
         @gndPubs = @{ pica_fields($titleRecord, '029A') };
       }
       my $authorField = pica_value($titleRecord, '021Ah');
+      my $titleCorpField = pica_value($titleRecord, '021Ae');
       my $corpField = pica_value($titleRecord, '029Aa');
 
       if(!$checkPubs){
@@ -1485,7 +1525,7 @@ sub createJSON {
               next;
             }
 
-            if($authType eq 'Tb' && $gndID){
+            if($authType && $authType eq 'Tb' && $gndID){
 
               my $orgURI = "http://d-nb.info/".$gndID;
 
@@ -1508,7 +1548,21 @@ sub createJSON {
             }
           }
         }else{
-          if($authorField){
+          if($titleCorpField){
+            my $ncsuAuthor = searchNcsuOrgs($titleCorpField);
+
+            if($ncsuAuthor){
+              push @{ $titleInfo{'publisher_history'}} , {
+                  'name' => $ncsuAuthor,
+                  'startDate' => convertToTimeStamp($dts[0][0], 0),
+                  'endDate' => convertToTimeStamp($dts[0][1], 1),
+                  'status' => ""
+              };
+              $pubFromCorp++;
+              $pkgStats{'pubFromCorpPkg'}++;
+            }
+            # print "Used author $authorField as publisher.\n";
+          }elsif($authorField){
             my $ncsuAuthor = searchNcsuOrgs($authorField);
 
             if($ncsuAuthor){
@@ -1690,13 +1744,13 @@ sub createJSON {
               _max_results => 1
             );
           }elsif($endpoint eq "zdb"){
-            my $relQryString = 'zdbid='.$relatedID;
+            my $relQryString = 'pica.yyy='.$relatedID;
 
             %relAttrs = (
-              base => 'http://services.dnb.de/sru/zdb',
+              base => 'http://sru.gbv.de/zdbdb',
               query => $relQryString,
-              recordSchema => 'PicaPlus-xml',
-              parser => 'ppxml',
+              recordSchema => 'picaxml',
+              parser => 'picaxml',
               _max_results => 1
             );
           }
@@ -1972,7 +2026,8 @@ sub createJSON {
         my $sourceURL = "";
         my $viableURL = 0;
         my $internalComments = "";
-        my @validComments = ('Verlag','Digitalisierung','Agentur','H;','A;','D;');
+        my $isNL = 0;
+        my @validComments = ('Verlag','Digitalisierung','Agentur','H;','A;','D;','H');
         my $publicComments = "";
         my $subfPos = 0;
         $sourcePos++;
@@ -2021,6 +2076,7 @@ sub createJSON {
 
         }else{
           $pkgStats{'nlURLs'}++;
+          $isNL = 1;
         }
 
         if(  $internalCommentIsValid == 1
@@ -2104,6 +2160,7 @@ sub createJSON {
                 push @titleWarnings , {'009P[05]'=> $fieldParts[1]};
                 push @titleWarningsZDB , {'009Qx'=> $fieldParts[1]};
               }
+              $dp = $dp =~ s/\s//g;
 
               my ($tempVol) = $dp =~ /([0-9]+)\.[0-9]{4}/;
               my ($tempYear) = $dp =~ /\.?([0-9]{4})/;
@@ -2180,7 +2237,7 @@ sub createJSON {
           'endVolume' => $endVol,
           'endIssue' => $endIss,
           'coverageDepth' => "Fulltext",
-          'coverageNote' => "NL-DE",
+          'coverageNote' => $isNL == 1 ? "NL-DE" : "",
           'embargo' => ""
         };
 
@@ -2203,6 +2260,7 @@ sub createJSON {
         $pkgStats{'numNoUrlPkg'}++;
 
         my $pUrl = $knownSelection{$sigel}{'url'};
+        my $pName = $knownSelection{$sigel}{'platform'};
         my $platformURL = URI->new( $pUrl );
         my $platformHost = $platformURL->authority;
         if($endpoint eq 'gvk'){
@@ -2214,17 +2272,19 @@ sub createJSON {
               '009P0'=> "ZDB-URLs != GVK-URLs?"
           };
         }
-        push @{ $package{'tipps'} } , {
-          'medium' => "Electronic",
-          'platform' => {
-            'name' => $platformHost ? $platformHost : $provider,
-            'primaryUrl' => $pUrl ? $pUrl : $provider
-          },
-          'status' => "Current",
-          'title' => {
-            'identifiers' => \@{$titleInfo{'identifiers'}},
-            'name' => $titleInfo{'name'},
-            'type' => "Serial"
+        if($provider){
+          push @{ $package{'tipps'} } , {
+            'medium' => "Electronic",
+            'platform' => {
+              'name' => $platformHost ? $platformHost : ($pName ? $pName : $provider),
+              'primaryUrl' => $pUrl ? $pUrl : ""
+            },
+            'status' => "Current",
+            'title' => {
+              'identifiers' => \@{$titleInfo{'identifiers'}},
+              'name' => $titleInfo{'name'},
+              'type' => "Serial"
+            }
           }
         }
       }
