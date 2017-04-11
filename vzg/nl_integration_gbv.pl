@@ -93,7 +93,7 @@ my $onlyJournals = 1;
 
 ## Name der JSON-Datei mit Paketinformationen
 
-my $knownSeals = 'AL_Pakete.json';
+my $knownSeals = 'CMS_Pakete.json';
 
 ## Standard-URL der Ziel-GOKb
 
@@ -316,7 +316,9 @@ sub getZdbName {
         my $messyName = pica_value($packageInstance, '029Aa');
         my $bracketPos = index($messyName, '[');
 
-        $pkgInfos{'name'} = substr($messyName, 0, $bracketPos-1);
+        if($bracketPos > 0){
+          $pkgInfos{'name'} = substr($messyName, 0, $bracketPos-1);
+        }
         $pkgInfos{'name'} =~ s/^\s+|\s+$//g;
 
         $pkgInfos{'provider'} = pica_value($packageInstance, '035Pg')
@@ -394,9 +396,11 @@ sub getSeals {
   # Request package id, seal
 
   my $stmt = qq(select zuid,
-    seal as sigel
+    seal as sigel,
+    meta_type as type
     FROM lmodels
-    WHERE meta_type = 'NLLicenceModelOptIn'
+    WHERE \( meta_type = 'NLLicenceModelStandard'
+    OR meta_type = 'NLLicenceModelOptIn' \)
     AND wf_state='published';
   );
 
@@ -431,14 +435,21 @@ sub getSeals {
   # Process packages
 
   while(my @row = $sth->fetchrow_array()) {
-    my ($zuid, $pkgSigel) = @row;
+    my ($zuid, $pkgSigel, $licence_type) = @row;
 
     if($pkgSigel && $pkgSigel =~ /^ZDB-[0-9]+-[a-zA-Z]+$/ && $pkgSigel ne 'ZDB-1-TEST'){
       my %pkgInfos = getZdbName($pkgSigel);
+      my $lType;
+      if($licence_type eq 'NLLicenceModelStandard'){
+        $lType = "NL";
+      }elsif($licence_type eq 'NLLicenceModelOptIn'){
+        $lType = "AL";
+      }
 
       my %pkg = (
         sigel => $pkgSigel,
         zuid => $zuid,
+        type => $lType ? $lType : "",
         name => $pkgInfos{'name'},
         authority => $pkgInfos{'authority'},
         provider => $pkgInfos{'provider'},
@@ -469,7 +480,7 @@ sub getSeals {
 
         ### Verify Seals
 
-        unless(!$orgSigel || $orgSigel =~ /^DE\-[a-zA-Z0-9üäöÜÄÖ]+-?[0-9]$/){
+        if($orgSigel){
 
           $tempISIL = $orgSigel;
           $tempISIL =~ s/^\s+|\s+$//g;
@@ -480,7 +491,6 @@ sub getSeals {
           if($tempISIL =~ /^[\w\d]+[\/\s\-]?[\w\d]*$/){
 
             unless($tempISIL =~ /^DE-/){
-              $tempISIL = "DE-".$tempISIL;
 
               if($tempISIL =~ /^\w+[\/\s\-]?\d+\w*\/?\d?$/){
 
@@ -505,16 +515,19 @@ sub getSeals {
                 $hasError = 1;
 
               }
+              if($hasError == 0){
+                $tempISIL = "DE-".$tempISIL;
+              }
             }
 
             if($hasError == 0){
               my %bibAttrs = (
                   base => 'http://sru.gbv.de/isil',
                   query => 'pica.isi='.$tempISIL,
-                  recordSchema => 'PicaPlus-xml',
-                  parser => 'ppxml'
+                  recordSchema => 'picaxml',
+                  parser => 'picaxml'
               );
-
+              say STDOUT "Suche nach ISIL: $tempISIL!";
               my $orgImporter = Catmandu::Importer::SRU->new(%bibAttrs)
                 or die "Abfrage über ".$bibAttrs{'base'}." fehlgeschlagen!\n";
 
@@ -525,9 +538,11 @@ sub getSeals {
                 $isil = $tempISIL;
               }else{
                 $pkg{'orgStats'}{'numWrongSig'}++;
+                say "Suche nach $tempISIL erfolglos!";
               }
             }else{
               $pkg{'orgStats'}{'numWrongSig'}++;
+              say "Sigel $orgSigel ist offensichtlich ungültig.";
             }
           }else{
             $pkg{'orgStats'}{'numWrongSig'}++;
@@ -642,7 +657,7 @@ sub createJSON {
     if($endpoint eq "gvk"){
       $wfile = $warningDir->file("Warnings_all.json");
     }elsif($endpoint eq "zdb"){
-      $wfile = $warningDir->file("Warnings_all_z.json");
+      $wfile = $warningDir->file("Warnings_all_zdb.json");
     }
     $wfile->touch();
     $out_warnings = $wfile->openw();
@@ -650,7 +665,7 @@ sub createJSON {
     if($endpoint eq "gvk"){
       $wzfile = $warningDir->file("Warnings_zdb_all.json");
     }elsif($endpoint eq "zdb"){
-      $wzfile = $warningDir->file("Warnings_zdb_all_z.json");
+      $wzfile = $warningDir->file("Warnings_zdb_all_zdb.json");
     }
     $wzfile->touch();
     $out_warnings_zdb = $wzfile->openw();
@@ -658,7 +673,7 @@ sub createJSON {
     if($endpoint eq "gvk"){
       $wgfile = $warningDir->file("Warnings_gvk_all.json");
     }elsif($endpoint eq "zdb"){
-      $wgfile = $warningDir->file("Warnings_gvk_all_z.json");
+      $wgfile = $warningDir->file("Warnings_gvk_all_zdb.json");
     }
     $wgfile->touch();
     $out_warnings_gvk = $wgfile->openw();
@@ -669,7 +684,7 @@ sub createJSON {
     if($endpoint eq "gvk"){
       $wfile = $wdir->file("Warnings_$filter.json");
     }elsif($endpoint eq "zdb"){
-      $wfile = $wdir->file("Warnings_".$filter."_z.json");
+      $wfile = $wdir->file("Warnings_".$filter."_zdb.json");
     }
     $wfile->touch();
     $out_warnings = $wfile->openw();
@@ -677,7 +692,7 @@ sub createJSON {
     if($endpoint eq "gvk"){
       $wzfile = $wdir->file("Warnings_zdb_$filter.json");
     }elsif($endpoint eq "zdb"){
-      $wzfile = $wdir->file("Warnings_zdb_".$filter."_z.json");
+      $wzfile = $wdir->file("Warnings_zdb_".$filter."_zdb.json");
     }
     $wzfile->touch();
     $out_warnings_zdb = $wzfile->openw();
@@ -685,7 +700,7 @@ sub createJSON {
     if($endpoint eq "gvk"){
       $wgfile = $wdir->file("Warnings_gvk_$filter.json");
     }elsif($endpoint eq "zdb"){
-      $wgfile = $wdir->file("Warnings_gvk_".$filter."_z.json");
+      $wgfile = $wdir->file("Warnings_gvk_".$filter."_zdb.json");
     }
     $wgfile->touch();
     $out_warnings_gvk = $wgfile->openw();
@@ -768,7 +783,7 @@ sub createJSON {
     my $out_pkg;
     my $packageFn = $sigel;
     if($endpoint eq "zdb"){
-      $packageFn .= "_z";
+      $packageFn .= "_zdb";
     }
 
     if($filter){
@@ -808,13 +823,15 @@ sub createJSON {
       : "";
     my %pkgSource;
 
-    if($endpoint eq 'gvk'){
+    my $pkgType = $knownSelection{$sigel}{'type'};
+
+    if($endpoint eq 'gvk' && $pkgType == "NL"){
       %pkgSource = (
         url => "http://sru.gbv.de/gvk",
         name => "GVK-SRU",
         normname => "GVK_SRU"
       );
-    }elsif($endpoint eq 'zdb'){
+    }elsif($endpoint eq 'zdb' || $pkgType == "AL"){
       %pkgSource = (
         url => "http://sru.gbv.de/zdbdb",
         name => "ZDB-SRU",
@@ -823,10 +840,10 @@ sub createJSON {
     }
 
     $package{'packageHeader'} = {
-      name => ($provider ?  "$provider: " : "")."$pkgName: NL $pkgYear",
-      # identifiers => { name => "ISIL", value => $sigel },
+      name => ($provider ?  "$provider: " : "")."$pkgName: $pkgType: $pkgYear",
+      identifiers => [{ type => "isil", value => $sigel }],
       additionalProperties => [],
-      variantNames => [ $sigel ],
+      variantNames => [],
       scope => "",
       listStatus => "In Progress",
       breakable => "No",
@@ -840,12 +857,12 @@ sub createJSON {
       nominalProvider => $provider,
       listVerifiedDate => $listVerDate,
       source => \%pkgSource,
-      curatoryGroups => ["LAS:eR"],
+      curatoryGroups => ["LAS:eR", "VZG"],
     };
 
     $package{'tipps'} = [];
     my %attrs;
-    if($endpoint eq "gvk"){
+    if($endpoint eq "gvk" && $pkgType eq "NL"){
       my $qryString = 'pica.xpr='.$sigel;
 
       if($onlyJournals == 1){
@@ -861,7 +878,7 @@ sub createJSON {
         parser => 'picaxml',
         _max_results => 5
       );
-    }elsif($endpoint eq "zdb"){
+    }elsif($endpoint eq "zdb" || $pkgType eq "AL"){
       my $qryString = 'pica.isl='.$sigel;
 
       %attrs = (
@@ -919,12 +936,12 @@ sub createJSON {
       $titleInfo{'identifiers'} = [];
 
       ## PPN
-      if($endpoint eq "gvk"){
+      if($endpoint eq "gvk" && $pkgType eq "NL"){
         push @{ $titleInfo{'identifiers'} } , {
           'type' => "gvk_ppn",
           'value' => $ppn
         };
-      }elsif($endpoint eq "zdb"){
+      }elsif($endpoint eq "zdb" || $pkgType eq "AL"){
         push @{ $titleInfo{'identifiers'} } , {
           'type' => "zdb_ppn",
           'value' => $ppn
@@ -968,12 +985,22 @@ sub createJSON {
           print " hat keine ZDB-ID! Überspringe Titel..\n";
 
           push @titleWarnings, {
-              '006Z0' => $ppn
+              '006Z0' => 'Keine ZDB-ID angegeben!'
           };
 
           push @titleWarningsGVK, {
-              '006Z0' => $ppn
+              '006Z0' => 'Keine ZDB-ID angegeben!'
           };
+
+          if(scalar @titleWarnings > 0){
+            $authorityNotes{$knownSelection{$sigel}{'authority'}}{$sigel}{'warnings'}{$ppn} =
+              \@titleWarnings;
+          }
+
+          if(scalar @titleWarningsGVK > 0){
+            $authorityNotesGVK{$knownSelection{$sigel}{'authority'}}{$sigel}{'warnings'}{$ppn} =
+              \@titleWarningsGVK;
+          }
 
           next;
         }
@@ -1321,9 +1348,9 @@ sub createJSON {
       my $checkPubs = pica_value($titleRecord, '033An');
       my @altPubs = @{ pica_fields($titleRecord, '033B[05]') };
       my @gndPubs;
-      if($endpoint eq "gvk"){
+      if($endpoint eq "gvk" && $pkgType eq "NL" ){
         @gndPubs = @{ pica_fields($titleRecord, '029G') };
-      }elsif($endpoint eq "zdb"){
+      }elsif($endpoint eq "zdb" || $pkgType eq "AL"){
         @gndPubs = @{ pica_fields($titleRecord, '029A') };
       }
       my $authorField = pica_value($titleRecord, '021Ah');
@@ -1351,11 +1378,11 @@ sub createJSON {
                 push @titleWarnings, {
                   '033A' => \@pub
                 };
-                if($endpoint eq "gvk"){
+                if($endpoint eq "gvk" && $pkgType eq "NL"){
                   push @titleWarningsGVK, {
                     '033A' => \@pub
                   };
-                }elsif($endpoint eq "zdb"){
+                }elsif($endpoint eq "zdb" || $pkgType eq "AL"){
                   push @titleWarningsZDB, {
                     '033A' => \@pub
                   };
@@ -1510,7 +1537,7 @@ sub createJSON {
                     '029Ga' => \@pub
                   };
                 }
-              }elsif($subField eq 'M'){
+              }elsif($subField eq 'M' || $subField eq '7'){
                 $authType = substr($pub[$subfPos+1],0,2);
               }elsif($subField eq '0'){
                 $gndID = $pub[$subfPos+1];
@@ -1521,7 +1548,7 @@ sub createJSON {
               $subfPos++;
             }
             if($isParent == 1){
-              say "Parent: $pubName, Child: $branch";
+              say "$id - Parent: $pubName, Child: $branch";
               next;
             }
 
@@ -1533,6 +1560,7 @@ sub createJSON {
                 'name' => $pubName,
                 'identifiers' => [{'type' => "global", 'value' => $orgURI}]
               );
+
               if(!$orgsToAdd{$pubName}){
                 $orgsToAdd{$pubName} = \%orgObj;
               }
@@ -1604,6 +1632,7 @@ sub createJSON {
         my $relName;
         my $relatedID;
         my @connectedIDs;
+        my $relPPN;
         my $relatedDates;
         my $relIsNl = 0;
         my $isDirectRelation = 0;
@@ -1616,7 +1645,7 @@ sub createJSON {
         );
 
         foreach my $subField (@relTitle){
-          if($endpoint eq "gvk"){
+          if($endpoint eq "gvk" && $pkgType eq "NL"){
             if($subField eq 'c'){
 
               $relationType = $relTitle[$subfPos+1];
@@ -1632,9 +1661,9 @@ sub createJSON {
               $relName = $relTitle[$subfPos+1];
 
             }elsif($subField eq 'f' || $subField eq 'd'){
-
-              my ($tempStartYear) = $relTitle[$subfPos+1] =~ /([0-9]{4})\s?-/;
-              my ($tempEndYear) = $relTitle[$subfPos+1] =~ /-\s?([0-9]{4})[^\.]?/;
+              my $cleanedRelDates = $relTitle[$subfPos+1] =~ s/\[\]//g;
+              my ($tempStartYear) = $cleanedRelDates =~ /([0-9]{4})\s?-/;
+              my ($tempEndYear) = $cleanedRelDates =~ /-\s?([0-9]{4})[^\.]?/;
 
               if($tempEndYear){
                 $rEndYear = $tempEndYear;
@@ -1679,7 +1708,7 @@ sub createJSON {
                 }
               }
             }
-          }elsif($endpoint eq "zdb"){
+          }elsif($endpoint eq "zdb" || $pkgType eq "AL"){
             if($subField eq 'b'){
               $relationType = $relTitle[$subfPos+1];
             }
@@ -1699,8 +1728,9 @@ sub createJSON {
               $relName = $relTitle[$subfPos+1];
             }
             if($subField eq 'H'){
-              my ($tempStartYear) = $relTitle[$subfPos+1] =~ /([0-9]{4})\s?-/;
-              my ($tempEndYear) = $relTitle[$subfPos+1] =~ /-\s?([0-9]{4})[^\.]?/;
+              my $cleanedRelDates = $relTitle[$subfPos+1] =~ s/\[\]//g;
+              my ($tempStartYear) = $cleanedRelDates =~ /([0-9]{4})\s?-/;
+              my ($tempEndYear) = $cleanedRelDates =~ /-\s?([0-9]{4})[^\.]?/;
 
               if($tempEndYear){
                 $rEndYear = $tempEndYear;
@@ -1729,7 +1759,7 @@ sub createJSON {
 
           my %relAttrs;
 
-          if($endpoint eq "gvk"){
+          if($endpoint eq "gvk" && $pkgType eq "NL"){
             my $relQryString = 'pica.zdb='.$relatedID;
 
             if($onlyJournals == 1){
@@ -1743,7 +1773,7 @@ sub createJSON {
               parser => 'picaxml',
               _max_results => 1
             );
-          }elsif($endpoint eq "zdb"){
+          }elsif($endpoint eq "zdb" || $pkgType eq "AL"){
             my $relQryString = 'pica.yyy='.$relatedID;
 
             %relAttrs = (
@@ -1764,7 +1794,9 @@ sub createJSON {
           }; warn $@ if $@;
 
           if($relRecord && ref($relRecord) eq 'HASH'){
-            if($endpoint eq "gvk"){
+            $relPPN = pica_value($relRecord, '003@0');
+
+            if($endpoint eq "gvk" && $pkgType eq "NL"){
               if(pica_value($relRecord, '008E')){
                 my @relISIL = pica_values($relRecord, '008E');
 
@@ -1774,7 +1806,11 @@ sub createJSON {
                   }
                 }
               }
-            }elsif($endpoint eq "zdb"){
+              push @{ $relObj{'identifiers'} } , {
+                'type' => "gvk_ppn",
+                'value' => $relPPN
+              };
+            }elsif($endpoint eq "zdb" || $pkgType eq "AL"){
               if(pica_value($relRecord, '017B')){
                 my @relISIL = pica_values($relRecord, '017B');
 
@@ -1784,6 +1820,10 @@ sub createJSON {
                   }
                 }
               }
+              push @{ $relObj{'identifiers'} } , {
+                'type' => "zdb_ppn",
+                'value' => $relPPN
+              };
             }
             if(pica_value($relRecord, '039E')){
               my @relRelatedTitles = @{ pica_fields($relRecord, '039E') };
@@ -1793,7 +1833,7 @@ sub createJSON {
                 my $rSubfPos = 0;
 
                 foreach my $subField (@rt){
-                  if($endpoint eq "gvk"){
+                  if($endpoint eq "gvk" && $pkgType eq "NL"){
                     if($subField eq 'ZDB' && $rt[$rSubfPos+1] eq '6'){
                       my $rID = formatZdbId($rt[$rSubfPos+2]);
 
@@ -1801,7 +1841,7 @@ sub createJSON {
                         $isDirectRelation = 1;
                       }
                     }
-                  }elsif($endpoint eq "zdb"){
+                  }elsif($endpoint eq "zdb" || $pkgType eq "AL"){
                     if($subField eq '0'){
                       my $rID = formatZdbId($rt[$rSubfPos+1]);
 
@@ -1815,6 +1855,10 @@ sub createJSON {
               }
               $relObj{'title'} = $relName ? $relName : "";
               push @{ $relObj{'identifiers'} }, { 'type' => "zdb", 'value' => $relatedID };
+
+              if(pica_value($relRecord, '004V0')){
+                push @{ $relObj{'identifiers'} }, { 'type' => "doi", 'value' => pica_value($relRecord, '004V0') };
+              }
 
               if(pica_value($relRecord, '005A0')){
                 my @relatedISSNs = @{ pica_fields($relRecord, '005A')};
@@ -2005,9 +2049,9 @@ sub createJSON {
       # -------------------- TIPPS (Online-Ressourcen) --------------------
 
       my @onlineSources;
-      if($endpoint eq "gvk"){
+      if($endpoint eq "gvk" && $pkgType eq "NL"){
         @onlineSources= @{ pica_fields($titleRecord, '009P[05]') };
-      }elsif($endpoint eq "zdb"){
+      }elsif($endpoint eq "zdb" || $pkgType eq "AL"){
         @onlineSources= @{ pica_fields($titleRecord, '009Q') };
       }
       my $numSources = scalar @onlineSources;
@@ -2073,7 +2117,7 @@ sub createJSON {
 
         if($publicComments ne "Deutschlandweit zugänglich" && $publicComments ne "NL"){
           $pkgStats{'otherURLs'}++;
-
+          next;
         }else{
           $pkgStats{'nlURLs'}++;
           $isNL = 1;
@@ -2086,7 +2130,6 @@ sub createJSON {
           $noViableUrl = 0;
         }else{
           say "Skipping TIPP in $id.. wrong Type: $internalComments";
-          next;
         }
 
         $tipp{'status'} = "Current";
@@ -2156,7 +2199,7 @@ sub createJSON {
             my $datePartPos = 0;
 
             foreach my $dp (@datesParts){
-              if($dp =~ /[a-zA-Z]+/ || $dp !~ /[0-9]+\.[0-9]{4}/){
+              if($dp =~ /[a-zA-Z]+/ || $dp !~ /^[0-9]*\.?[0-9]{4}/){
                 push @titleWarnings , {'009P[05]'=> $fieldParts[1]};
                 push @titleWarningsZDB , {'009Qx'=> $fieldParts[1]};
               }
@@ -2230,14 +2273,14 @@ sub createJSON {
         }
         $tipp{'coverage'} = [];
         push @{ $tipp{'coverage'} } , {
-          'startDate' => "",
+          'startDate' => $startDate ? $startDate : "",
           'startVolume' => $startVol,
           'startIssue' => $startIss,
-          'endDate' => "",
+          'endDate' => $endDate ? $endDate : "",
           'endVolume' => $endVol,
           'endIssue' => $endIss,
           'coverageDepth' => "Fulltext",
-          'coverageNote' => $isNL == 1 ? "NL-DE" : "",
+          'coverageNote' => $isNL == 1 ? "$pkgType-DE" : "",
           'embargo' => ""
         };
 
@@ -2263,7 +2306,7 @@ sub createJSON {
         my $pName = $knownSelection{$sigel}{'platform'};
         my $platformURL = URI->new( $pUrl );
         my $platformHost = $platformURL->authority;
-        if($endpoint eq 'gvk'){
+        if($endpoint eq 'gvk' && $pkgType eq "NL"){
           push @titleWarnings , {
               '009P0'=> "ZDB-URLs != GVK-URLs?"
           };
@@ -2402,6 +2445,7 @@ sub createJSON {
     }
 
     if($postData == 1){
+      sleep 10;
       say "Submitting Package $sigel to GOKb (".$gokbCreds{'base'}.")";
 
       my $postResult = postData('crossReferencePackage', \%package);
@@ -2410,8 +2454,6 @@ sub createJSON {
         say "Could not Upload Package $sigel! Errorcode $postResult";
         $skippedPackages .= $sigel." ";
       }
-
-      sleep 2;
     }
     $packagesTotal++;
     say "Finished processing $currentTitle Titles of package $sigel.";
@@ -2431,7 +2473,7 @@ sub createJSON {
   if($filter){
     my $tfileName = "titles_$filter";
     if($endpoint eq "zdb"){
-      $tfileName .= "_z";
+      $tfileName .= "_zdb";
     }
     my $tfile = $titleDir->file("$tfileName.json");
     $tfile->touch();
@@ -2447,7 +2489,7 @@ sub createJSON {
   my $out_orgs;
 
   if($endpoint eq "zdb"){
-    $ofileName .= "_z";
+    $ofileName .= "_zdb";
   }
   my $orgsFile;
 
