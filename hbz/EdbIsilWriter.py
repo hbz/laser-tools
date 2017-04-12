@@ -1,7 +1,12 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 #
-# 2017-02-xx
+# initial import for ISIL into EDB using the lobid api
+#
+# CAUTION: 
+# deletes existing ISIL values in EDB
+#
+# 2017-04-12
 # david.klober@hbz-nrw.de
 
 from Config import Config
@@ -10,7 +15,7 @@ import requests
 import string
 import sys
 
-class EDBISILWriter:
+class EdbIsilWriter:
 	
 	# set False to write to DB
 	dryRun         = True 
@@ -147,5 +152,5 @@ class EDBISILWriter:
 			self.resultFile.write("%s - %s \n" % (item[0].encode('UTF-8'), item[1].encode('UTF-8')))
 
 
-eiw = EDBISILWriter()
+eiw = EdbIsilWriter()
 eiw.do()

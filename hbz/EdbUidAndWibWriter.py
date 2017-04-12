@@ -1,7 +1,13 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 #
-# 2017-02-xx
+# initial import for UID and WIB into EDB
+#
+# CAUTION: 
+# deletes existing UID and WIB values in EDB
+# inserts UID and WIB if match via ISIL, Name or URL is found
+#
+# 2017-04-12
 # david.klober@hbz-nrw.de
 
 from Config import Config
@@ -9,20 +15,20 @@ import MySQLdb as mdb
 import re
 import xmltodict
 
-class EDBUIDWriter:
+class EdbUidAndWibWriter:
 	
 	# set False to write to DB
 	dryRun         = True
 
 	inputFile      = './_nlinstitutions.xml'
-	resultFileName = 'result.UID.txt'
-	xml = []
-	edb = []
+	resultFileName = 'result.UIDandWIB.txt'
 
-	listUidMatch   = []
-	listSigelMatch = []
-	listTitleMatch = []
-	listUrlMatch   = []
+	xml = [] # xml content as list of dictionaries
+	edb = [] # edb content as list of dictionaries
+
+	listSigelMatch = [] # edb teilnehmer matched by isil = nl:sigel
+	listTitleMatch = [] # edb teilnehmer matched by name = nl:title
+	listUrlMatch   = [] # edb teilnehmer matched by url
 
 	matchedXmlList     = []
 	nonMatchingXmlList = []
@@ -52,6 +58,7 @@ class EDBUIDWriter:
 		for inst in result['nl:institutions']['nl:institution']:
 			institution = {}
 			institution['uid']   = inst['nl:uid']
+			institution['wib']   = inst['nl:user_name']
 			institution['sigel'] = inst['nl:sigel']
 			institution['title'] = inst['nl:title']
 			institution['url']   = inst['nl:url']
@@ -68,6 +75,7 @@ class EDBUIDWriter:
 
 			if(False == self.dryRun):
 				cur.execute("UPDATE Teilnehmer SET UID = null")
+				cur.execute("UPDATE Teilnehmer SET WIB = null")
 
 			cur.execute("SELECT * FROM Teilnehmer")
 
@@ -75,6 +83,7 @@ class EDBUIDWriter:
 			for row in rows:
 				teilnehmer = {}
 				teilnehmer['uid']   = row['UID']
+				teilnehmer['wib']   = row['WIB']
 				teilnehmer['isil']  = row['ISIL']
 				teilnehmer['name']  = row['Name']
 				teilnehmer['url']   = row['URL']
@@ -98,12 +107,7 @@ class EDBUIDWriter:
 			for inst in self.xml:
 
 				uid = inst['uid']
-
-				if(tn['uid'] and inst['uid']):
-					if(self.norm(tn['uid']) == self.norm(inst['uid'])):
-						print 'UID Match: %s' % tn['uid']
-						self.matchedXmlList.append(uid)
-						tn['match'].append('uid')
+				wib = inst['wib']
 
 				if(tn['isil'] and inst['sigel']):
 					deSigel = self.norm(inst['sigel'])
@@ -115,6 +119,7 @@ class EDBUIDWriter:
 						print 'ISIL Match: %s' % tn['isil']
 						self.matchedXmlList.append(uid)
 						tn['uid'] = uid
+						tn['wib'] = wib
 						tn['match'].append('sigel')
 
 				if(tn['name'] and inst['title']):
@@ -122,6 +127,7 @@ class EDBUIDWriter:
 						print 'NAME Match: %s' % tn['name']
 						self.matchedXmlList.append(uid)
 						tn['uid'] = uid
+						tn['wib'] = wib
 						tn['match'].append('title')
 
 				if(tn['url'] and inst['url']):
@@ -129,6 +135,7 @@ class EDBUIDWriter:
 						print 'URL Match: %s' % tn['url']
 						self.matchedXmlList.append(uid)
 						tn['uid'] = uid
+						tn['wib'] = wib
 						tn['match'].append('url')
 
 		
@@ -146,10 +153,7 @@ class EDBUIDWriter:
 		# sorting
 		for tn in self.edb:
 
-			if('uid' in tn['match']):
-				self.listUidMatch.append(tn)
-
-			elif('sigel' in tn['match']):
+			if('sigel' in tn['match']):
 				self.listSigelMatch.append(tn)
 
 			elif('title' in tn['match']):
@@ -176,10 +180,9 @@ class EDBUIDWriter:
 		print 'Institutions in XML: %d' % len(self.xml)
 		print 'Teilnehmer in EDB:   %d' % len(self.edb)
 		print '\n'
-		print 'UID Matches:        %s' % len(self.listUidMatch)
-		print 'Sigel=ISIL Matches: %s' % len(self.listSigelMatch)
-		print 'Title=Name Matches: %s' % len(self.listTitleMatch)
-		print 'URL Matches:        %s' % len(self.listUrlMatch)
+		print 'Teilnehmer mit ISIL=Sigel Matches: %s' % len(self.listSigelMatch)
+		print 'Teilnehmer mit Name=Title Matches: %s' % len(self.listTitleMatch)
+		print 'Teilnehmer mit URL Matches:        %s' % len(self.listUrlMatch)
 		print '\n'
 		print 'Ignored from XML:   %s' % len(self.nonMatchingXmlList)
 		print '\n'
@@ -193,13 +196,13 @@ class EDBUIDWriter:
 			cur = con.cursor(mdb.cursors.DictCursor)
 
 			for item in self.listSigelMatch:
-				cur.execute("UPDATE Teilnehmer SET UID = %s WHERE ISIL = %s", (item['uid'], item['isil']))
+				cur.execute("UPDATE Teilnehmer SET UID = %s, WIB = %s WHERE ISIL = %s", (item['uid'], item['wib'], item['isil']))
 
 			for item in self.listTitleMatch:
-				cur.execute("UPDATE Teilnehmer SET UID = %s WHERE Name = %s", (item['uid'], item['name']))
+				cur.execute("UPDATE Teilnehmer SET UID = %s, WIB = %s WHERE Name = %s", (item['uid'], item['wib'], item['name']))
 
 			for item in self.listUrlMatch:
-				cur.execute("UPDATE Teilnehmer SET UID = %s WHERE URL = %s", (item['uid'], item['url']))
+				cur.execute("UPDATE Teilnehmer SET UID = %s, WIB = %s WHERE URL = %s", (item['uid'], item['wib'], item['url']))
 
 		except mdb.Error, e:
 			print "Error %d: %s" % (e.args[0], e.args[1])
@@ -210,13 +213,14 @@ class EDBUIDWriter:
 				con.close()
 
 
-	def writeItem(self, item):
+	def writeTeilnehmerItem(self, item):
 
 		uid  = item['uid'] or ''
 		name = item['name'] or ''
 		isil = item['isil'] or ''
+		wib  = item['wib'] or ''
 		url  = item['url'] or ''
-		self.resultFile.write("%s : %s / %s / %s \n" % (uid.encode('UTF-8'), name.encode('UTF-8'), isil.encode('UTF-8'), url.encode('UTF-8')))
+		self.resultFile.write("%s : %s : %s / %s - %s \n" % (uid.encode('UTF-8'), name.encode('UTF-8'), isil.encode('UTF-8'), wib.encode('UTF-8'), url.encode('UTF-8')))
 
 
 	def writeFile(self):
@@ -224,34 +228,28 @@ class EDBUIDWriter:
 		self.resultFile.write('\n %s Institutions in XML' % len(self.xml))
 		self.resultFile.write('\n %s Teilnehmer in EDB'   % len(self.edb))
 
-		self.resultFile.write('\n %s UID Matches'         % len(self.listUidMatch))
-		self.resultFile.write('\n %s Sigel=ISIL Matches'  % len(self.listSigelMatch))
-		self.resultFile.write('\n %s Title=Name Matches'  % len(self.listTitleMatch))
-		self.resultFile.write('\n %s URL Matches'         % len(self.listUrlMatch))
+		self.resultFile.write('\n %s Teilnehmer mit ISIL=Sigel Matches'  % len(self.listSigelMatch))
+		self.resultFile.write('\n %s Teilnehmer mit Name=Title Matches'  % len(self.listTitleMatch))
+		self.resultFile.write('\n %s Teilnehmer mit URL Matches'         % len(self.listUrlMatch))
 
 		self.resultFile.write('\n %s Ignored from XML'    % len(self.nonMatchingXmlList))
 
 		self.resultFile.write('\n\n')
 
-		self.resultFile.write('\n ----- UID Matches ----- \n\n')
-
-		for item in self.listUidMatch:
-			self.writeItem(item)
-
-		self.resultFile.write('\n ----- Sigel=ISIL Matches ----- \n\n')
+		self.resultFile.write('\n ----- Teilnehmer mit ISIL=Sigel Matches ----- \n\n')
 
 		for item in self.listSigelMatch:
-			self.writeItem(item)
+			self.writeTeilnehmerItem(item)
 
-		self.resultFile.write('\n ----- Title=Name Matches ----- \n\n')
+		self.resultFile.write('\n ----- Teilnehmer mit Name=Title Matches ----- \n\n')
 
 		for item in self.listTitleMatch:
-			self.writeItem(item)
+			self.writeTeilnehmerItem(item)
 
-		self.resultFile.write('\n ----- URL Matches ----- \n\n')
+		self.resultFile.write('\n ----- Teilnehmer mit URL Matches ----- \n\n')
 
 		for item in self.listUrlMatch:
-			self.writeItem(item)
+			self.writeTeilnehmerItem(item)
 
 		self.resultFile.write('\n ----- Ignored from XML ----- \n\n')
 
@@ -259,9 +257,10 @@ class EDBUIDWriter:
 			uid  = item['uid'] or ''
 			name = item['title'] or ''
 			isil = item['sigel'] or ''
+			wib  = item['wib'] or ''
 			url  = item['url'] or ''
-			self.resultFile.write("%s : %s / %s / %s \n" % (uid.encode('UTF-8'), name.encode('UTF-8'), isil.encode('UTF-8'), url.encode('UTF-8')))
+			self.resultFile.write("%s : %s : %s / %s - %s \n" % (uid.encode('UTF-8'), name.encode('UTF-8'), isil.encode('UTF-8'), wib.encode('UTF-8'), url.encode('UTF-8')))
 
 
-euw = EDBUIDWriter()
-euw.do()
+euaww = EdbUidAndWibWriter()
+euaww.do()
