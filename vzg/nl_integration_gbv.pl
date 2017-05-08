@@ -64,6 +64,23 @@ my $warningDir = dir("warnings");
 my $orgsDir = dir("orgs");
 my $logDir = dir("logs");
 
+## userListVerifier in der GOKb setzen?
+
+my $verifyTitleList = 0;
+
+## Nur Zeitschriften?
+
+my $onlyJournals = 1;
+
+## Name der JSON-Datei mit Paketinformationen
+
+my $knownSeals = 'CMS_Pakete.json';
+
+## Standard-URL der Ziel-GOKb
+
+my $baseUrl = 'http://localhost:8080/gokb/';
+
+
 ### logging
 
 my $logFnDate = strftime '%Y-%m-%d', localtime;
@@ -83,22 +100,6 @@ my $tee = new IO::Tee(\*STDOUT, $out_logs);
 
 select $tee;
 
-## userListVerifier in der GOKb setzen?
-
-my $verifyTitleList = 0;
-
-## Nur Zeitschriften?
-
-my $onlyJournals = 1;
-
-## Name der JSON-Datei mit Paketinformationen
-
-my $knownSeals = 'CMS_Pakete.json';
-
-## Standard-URL der Ziel-GOKb
-
-my $baseUrl = 'http://localhost:8080/gokb/';
-
 ## Öffne JSON-Datei mit GOKb-Organisationsdaten
 
 my $ncsu_orgs = do {
@@ -109,6 +110,7 @@ my $ncsu_orgs = do {
 
   <$orgs_in>
 };
+
 my %orgsJSON = %{decode_json($ncsu_orgs)}
   or die "Konnte JSON mit NCSU-Orgs nicht dekodieren! \n";
 
@@ -175,7 +177,7 @@ if($argP >= 0){
       $cmsCreds{'username'} = $creds[1];
       $cmsCreds{'password'} = $creds[2];
     }else{
-        die "Falsches Format der DB-Daten! Abbruch!";
+      die "Falsches Format der DB-Daten! Abbruch!";
     }
   }
 
@@ -290,6 +292,7 @@ sub getZdbName {
 
   my %pkgInfos = (
     'name' => "",
+    'type' => "",
     'provider' => "",
     'platform' => "",
     'mainUrl' => "",
@@ -323,6 +326,10 @@ sub getZdbName {
 
         $pkgInfos{'provider'} = pica_value($packageInstance, '035Pg')
           ? pica_value($packageInstance, '035Pg')
+          : "";
+
+        $pkgInfos{'type'} = pica_value($packageInstance, '035Pi')
+          ? pica_value($packageInstance, '035Pi')
           : "";
 
         if(index($pkgInfos{'provider'}, ";") >= 0){
@@ -447,18 +454,18 @@ sub getSeals {
       }
 
       my %pkg = (
-        sigel => $pkgSigel,
-        zuid => $zuid,
-        type => $lType ? $lType : "",
-        name => $pkgInfos{'name'},
-        authority => $pkgInfos{'authority'},
-        provider => $pkgInfos{'provider'},
-        platform => $pkgInfos{'platform'},
-        url => $pkgInfos{'mainUrl'},
-        scope => $pkgInfos{'scope'},
-        cmsOrgs => [],
-        zdbOrgs => [],
-        orgStats => {
+        'sigel' => $pkgSigel,
+        'zuid' => $zuid,
+        'type' => $lType ? $lType : "",
+        'name' => $pkgInfos{'name'},
+        'authority' => $pkgInfos{'authority'},
+        'provider' => $pkgInfos{'provider'},
+        'platform' => $pkgInfos{'platform'},
+        'url' => $pkgInfos{'mainUrl'},
+        'scope' => $pkgInfos{'scope'},
+        'cmsOrgs' => [],
+        'zdbOrgs' => [],
+        'orgStats' => {
           'numValidSig' => 0,
           'numOhneSig' => 0,
           'numWrongSig' => 0
@@ -630,8 +637,40 @@ sub createJSON {
 
       say "Generating JSON only for $filter!";
     }else{
-      say "Paket nicht bekannt!";
-      return -1;
+      say "Paket nicht bekannt! Suche Metadaten über Sigelstelle..";
+
+      my %pkgInfos = getZdbName($filter);
+      my $lType;
+
+      if(length($pkgInfos{'type'})){
+        if($pkgInfos{'type'} =~ /Allianz-Lizenz/){
+          $lType = "AL";
+        }elsif($pkgInfos{'type'} eq "Nationallizenz"){
+          $lType = "NL";
+        }else{
+          $lType = $pkgInfos{'type'};
+        }
+        say "Verarbeite Paket vom Typ ".$pkgInfos{'type'}."";
+      }else{
+        say "Konnte den Pakettyp nicht identifizieren.";
+        return -1;
+      }
+
+      if(length($pkgInfos{'name'})){
+        $knownSelection{$filter} = {
+          sigel => $filter,
+          type => $lType,
+          name => $pkgInfos{'name'},
+          authority => $pkgInfos{'authority'},
+          provider => $pkgInfos{'provider'},
+          platform => $pkgInfos{'platform'},
+          url => $pkgInfos{'mainUrl'},
+          scope => $pkgInfos{'scope'},
+        };
+      }else{
+        say "Zurückgeliefertes Paket hat keinen Namen!";
+        return -1;
+      }
     }
   }else{
     %knownSelection = %known;
@@ -796,7 +835,13 @@ sub createJSON {
     say "Processing Package ".($packagesTotal + 1).", ".$sigel."...";
 
     if($onlyJournals == 1
-      && scalar @{ $knownSelection{$sigel}{'zdbOrgs'} } == 0
+      &&
+        ( $knownSelection{$sigel}{'scope'} !~ /E-Journals/
+          ||
+            ( $knownSelection{$sigel}{'zdbOrgs'}
+              && scalar @{$knownSelection{$sigel}{'zdbOrgs'}} == 0
+            )
+        )
     ){
       say "Keine verknüpften Institutionen in der ZBD. Überspringe Paket.";
       next;
@@ -818,9 +863,24 @@ sub createJSON {
     $pkgName =~ s/:\s//g;
 
     my $pkgYear = strftime '%Y', localtime;
-    my $pkgPlatform = $knownSelection{$sigel}{'platformURL'}
-      ? $knownSelection{$sigel}{'platformURL'}
-      : "";
+
+    my $pkgPlatform = "";
+
+    if ( $knownSelection{$sigel}{'platform'} ) {
+      $pkgPlatform = $knownSelection{$sigel}{'platform'};
+    }else{
+      my $pkgUrl = URI->new( $knownSelection{$sigel}{'url'} );
+      my $pkgUrlHost;
+
+      if($pkgUrl->has_recognized_scheme){
+        $pkgUrlHost = $pkgUrl->authority;
+
+        if ($pkgUrlHost) {
+          $pkgPlatform = $pkgUrlHost;
+        }
+      }
+    }
+
     my %pkgSource;
 
     my $pkgType = $knownSelection{$sigel}{'type'};
@@ -1346,7 +1406,8 @@ sub createJSON {
       
       my @possiblePubs = @{ pica_fields($titleRecord, '033A') };
       my $checkPubs = pica_value($titleRecord, '033An');
-      my @altPubs = @{ pica_fields($titleRecord, '033B[05]') };
+      my @altPubs = @{ pica_fields($titleRecord, '033B') };
+      push(@possiblePubs, @altPubs);
       my @gndPubs;
       if($endpoint eq "gvk" && $pkgType eq "NL" ){
         @gndPubs = @{ pica_fields($titleRecord, '029G') };
@@ -1369,6 +1430,7 @@ sub createJSON {
           my $pubStart;
           my $pubEnd;
           my $subfPos = 0;
+          my $pubStatus = 'Active';
           my $preCorrectedPub = "";
 
           foreach my $subField (@pub){
@@ -1376,15 +1438,15 @@ sub createJSON {
             if($subField eq 'n'){
               if($tempPub){
                 push @titleWarnings, {
-                  '033A' => \@pub
+                  '033(A/B)' => \@pub
                 };
                 if($endpoint eq "gvk" && $pkgType eq "NL"){
                   push @titleWarningsGVK, {
-                    '033A' => \@pub
+                    '033(A/B)' => \@pub
                   };
                 }elsif($endpoint eq "zdb" || $pkgType eq "AL"){
                   push @titleWarningsZDB, {
-                    '033A' => \@pub
+                    '033(A/B)' => \@pub
                   };
                 }
               }
@@ -1395,11 +1457,14 @@ sub createJSON {
 
               if( $pub[$subfPos+1] =~ /[a-zA-Z\.,\(\)]+/ ) {
                 push @titleWarnings, {
-                  '033Ah' => $pub[$subfPos+1]
+                  '033(A/B)h' => $pub[$subfPos+1]
                 };
                 push @titleWarningsZDB, {
-                  '033Ah' => $pub[$subfPos+1]
+                  '033(A/B)h' => $pub[$subfPos+1]
                 };
+                if($pub[$subfPos+1] eq 'früher' || $pub[$subfPos+1] eq 'anfangs'){
+                  $pubStatus = 'Previous'
+                }
               }
               my ($tempStart) =
                 $pub[$subfPos+1] =~ /([0-9]{4})\/?[0-9]{0,2}\s?-/;
@@ -1413,6 +1478,7 @@ sub createJSON {
 
               if($tempEnd && looks_like_number($tempEnd)) {
                 $pubEnd = convertToTimeStamp($tempEnd, 1);
+                $pubStatus = 'Previous'
               }
             }
             $subfPos++;
@@ -1495,10 +1561,10 @@ sub createJSON {
             $pkgStats{'noPubMatchPkg'}++;
 
             push @titleWarnings, {
-              '033An' => $preCorrectedPub
+              '033(A/B)n' => $preCorrectedPub
             };
             push @titleWarningsZDB, {
-              '033An' => $preCorrectedPub
+              '033(A/B)n' => $preCorrectedPub
             };
           }
         }
@@ -1724,12 +1790,18 @@ sub createJSON {
               $relName = $relTitle[$subfPos+1];
             }
 
-            if($subField eq 'D'){
+            if($subField eq 'D' && $relTitle[$subfPos-1] ne 'N'){
               $relName = $relTitle[$subfPos+1];
             }
+
             if($subField eq 'H'){
               my $cleanedRelDates = $relTitle[$subfPos+1] =~ s/\[\]//g;
-              my ($tempStartYear) = $cleanedRelDates =~ /([0-9]{4})\s?-/;
+              my $tempStartYear;
+              if($cleanedRelDates =~ /^[0-9]{4}$/){
+                $tempStartYear = $cleanedRelDates;
+              }else{
+                $tempStartYear = $cleanedRelDates =~ /([0-9]{4})\s?-/;
+              }
               my ($tempEndYear) = $cleanedRelDates =~ /-\s?([0-9]{4})[^\.]?/;
 
               if($tempEndYear){
@@ -1740,12 +1812,12 @@ sub createJSON {
               }
               $relatedDates = $relTitle[$subfPos+1];
 
-              unless($relatedDates =~ /[0-9]{4}\s?-\s?[0-9]{0,4}/){
+              unless($relatedDates =~ /[0-9]{4}\s?-?\s?[0-9]{0,4}/ || $relatedDates =~ /[a-zA-Z=\/]+/){
                 push @titleWarnings, {
-                  '039Ef' => $relTitle[$subfPos+1]
+                  '039EH' => $relTitle[$subfPos+1]
                 };
                 push @titleWarningsZDB, {
-                  '039Ef' => $relTitle[$subfPos+1]
+                  '039EH' => $relTitle[$subfPos+1]
                 };
               }
             }
@@ -1815,7 +1887,7 @@ sub createJSON {
                 my @relISIL = pica_values($relRecord, '017B');
 
                 foreach my $relISIL (@relISIL){
-                  if($known{$relISIL}){
+                  if($known{$relISIL} || $relISIL eq $filter){
                     $relIsNl = 1;
                   }
                 }
@@ -1853,7 +1925,20 @@ sub createJSON {
                   $rSubfPos++;
                 }
               }
+
+              if(pica_value($relRecord, '025@a')){
+                $relName = pica_value($relRecord, '025@a');
+                if(index($relName, '@') <= 5){
+                  $relName =~ s/@//;
+                }
+              }elsif(pica_value($relRecord, '021Aa')){
+                $relName = pica_value($relRecord, '021Aa');
+                if(index($relName, '@') <= 5){
+                  $relName =~ s/@//;
+                }
+              }
               $relObj{'title'} = $relName ? $relName : "";
+
               push @{ $relObj{'identifiers'} }, { 'type' => "zdb", 'value' => $relatedID };
 
               if(pica_value($relRecord, '004V0')){
@@ -1920,7 +2005,7 @@ sub createJSON {
 
           if($relRecord && $relIsNl == 0){
             $pkgStats{'nonNlRelation'}++;
-            say STDOUT "Related title not in NL: $relatedID!";
+            say STDOUT "Related title not in known packages: $relatedID!";
 
             unless(any {$_ eq $relatedID} @unknownRelIds){
               push @unknownRelIds, $relatedID;
@@ -2071,7 +2156,11 @@ sub createJSON {
         my $viableURL = 0;
         my $internalComments = "";
         my $isNL = 0;
-        my @validComments = ('Verlag','Digitalisierung','Agentur','H;','A;','D;','H');
+        my $toSkip;
+        my %validComments = (
+          'gvk' => ['Verlag','Digitalisierung','Agentur'],
+          'zdb' => ['H;','A;','D;']
+        );
         my $publicComments = "";
         my $subfPos = 0;
         $sourcePos++;
@@ -2109,27 +2198,54 @@ sub createJSON {
           next;
         }
         my $internalCommentIsValid = 0;
-        foreach my $vCom (@validComments){
-          if($internalComments =~ $vCom){
-            $internalCommentIsValid = 1;
+
+        if($endpoint eq "gvk" && $pkgType eq "NL"){
+          foreach my $vCom ( @{ $validComments{'gvk'} } ){
+            if( $internalComments =~ $vCom ){
+              $internalCommentIsValid = 1;
+            }
+          }
+        }elsif($endpoint eq "zdb" || $pkgType eq "AL"){
+          foreach my $vCom ( @{ $validComments{'zdb'} } ){
+            my $corCom = $vCom =~ s/;//g;
+
+            if( $internalComments =~ $vCom || $internalComments eq $corCom ){
+              $internalCommentIsValid = 1;
+            }
           }
         }
 
-        if($publicComments ne "Deutschlandweit zugänglich" && $publicComments ne "NL"){
-          $pkgStats{'otherURLs'}++;
-          next;
-        }else{
-          $pkgStats{'nlURLs'}++;
-          $isNL = 1;
+        if($pkgType eq "NL"){
+          if($publicComments ne "Deutschlandweit zugänglich" && $publicComments ne "NL"){
+            $pkgStats{'otherURLs'}++;
+            $toSkip = 1;
+            next;
+          }else{
+            $pkgStats{'nlURLs'}++;
+            $isNL = 1;
+          }
+
+          if( $internalCommentIsValid == 1 && !$toSkip){
+            $noViableUrl = 0;
+          }else{
+            say STDOUT "Skipping NL-TIPP in $id.. wrong Type: $internalComments, $publicComments";
+            $toSkip = 1;
+            next;
+          }
+        }
+        else {
+          if($internalCommentIsValid == 1 && $publicComments ne "Deutschlandweit zugänglich" && $publicComments ne "NL"){
+            $pkgStats{'otherURLs'}++;
+            $noViableUrl = 0;
+          }else{
+            say STDOUT "Skipping TIPP in $id.. wrong Type or source: $internalComments, $publicComments";
+            $toSkip = 1;
+            next;
+          }
         }
 
-        if(  $internalCommentIsValid == 1
-          || $publicComments eq "Deutschlandweit zugänglich"
-          || $publicComments eq "NL"
-        ){
-          $noViableUrl = 0;
-        }else{
-          say "Skipping TIPP in $id.. wrong Type: $internalComments";
+        if($toSkip){
+          next;
         }
 
         $tipp{'status'} = "Current";
@@ -2199,14 +2315,14 @@ sub createJSON {
             my $datePartPos = 0;
 
             foreach my $dp (@datesParts){
-              if($dp =~ /[a-zA-Z]+/ || $dp !~ /^[0-9]*\.?[0-9]{4}/){
+              if( $dp ne " " && ($dp =~ /[a-zA-Z]+/ || $dp !~ /^\s?[0-9]*\.?[0-9]{4},?[0-9]*\s?$/) ){
                 push @titleWarnings , {'009P[05]'=> $fieldParts[1]};
                 push @titleWarningsZDB , {'009Qx'=> $fieldParts[1]};
               }
               $dp = $dp =~ s/\s//g;
 
               my ($tempVol) = $dp =~ /([0-9]+)\.[0-9]{4}/;
-              my ($tempYear) = $dp =~ /\.?([0-9]{4})/;
+              my ($tempYear) = $dp =~ /[^,]\.?([0-9]{4})[\s\/,]+/;
               my ($tempIss) = $dp =~ /,([0-9]+)\s*$/;
 
               # Date
@@ -2280,7 +2396,7 @@ sub createJSON {
           'endVolume' => $endVol,
           'endIssue' => $endIss,
           'coverageDepth' => "Fulltext",
-          'coverageNote' => $isNL == 1 ? "$pkgType-DE" : "",
+          'coverageNote' => $pkgType ? "$pkgType-DE" : "",
           'embargo' => ""
         };
 
@@ -2301,6 +2417,7 @@ sub createJSON {
       if($noViableUrl == 1){
         $numNoUrl++;
         $pkgStats{'numNoUrlPkg'}++;
+        say "No valid URL found, adding placeholder!";
 
         my $pUrl = $knownSelection{$sigel}{'url'};
         my $pName = $knownSelection{$sigel}{'platform'};
@@ -2452,7 +2569,12 @@ sub createJSON {
 
       if($postResult != 0){
         say "Could not Upload Package $sigel! Errorcode $postResult";
-        $skippedPackages .= $sigel." ";
+        say "Giving it one more try!";
+        sleep 10;
+        if(postData('crossReferencePackage', \%package) != 0){
+          say "Second try failed as well. Adding to report..";
+          $skippedPackages .= $sigel." ";
+        }
       }
     }
     $packagesTotal++;
