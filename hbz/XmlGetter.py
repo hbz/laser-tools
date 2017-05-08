@@ -1,6 +1,8 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 #
+# generating xml from EDB data
+#
 # 2017-02-xx
 # david.klober@hbz-nrw.de
 
@@ -12,7 +14,7 @@ import string
 import sys
 
 class Institution:
-	#user_name
+	user_name = ''
 	title = ''
 	street = ''
 	zip = ''
@@ -35,12 +37,12 @@ class Institution:
 	#mtime
 	#status
 
-class XMLGetter:
+class XmlGetter:
 	
 	fileValid 		 = ''
 	fileValidName 	 = 'result.Institutions.xml'
 	fileNonValid 	 = ''
-	fileNonValidName = 'result.NonValidInstitutions.xml'
+	fileNonValidName = 'result.Institutions.nonValid.xml'
 
 	institutions = []
 	nonValidInstitutions = []
@@ -95,6 +97,8 @@ class XMLGetter:
 					inst.sigel = self.norm(instRow['ISIL'])
 				if instRow['UID']:
 					inst.uid = self.norm(instRow['UID'])
+				if instRow['WIB']:
+					inst.user_name = self.norm(instRow['WIB'])
 
 				if instRow['Sigel']:
 					cur.execute("SELECT * FROM Ansprechpartner WHERE Teilnehmer_Sigel = '" + instRow['Sigel'] + "'")
@@ -172,5 +176,5 @@ class XMLGetter:
 
 
 
-xg = XMLGetter()
+xg = XmlGetter()
 xg.do()
