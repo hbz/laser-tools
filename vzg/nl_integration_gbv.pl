@@ -70,7 +70,7 @@ my $verifyTitleList = 0;
 
 ## Nur Zeitschriften?
 
-my $onlyJournals = 1;
+my $requestedType = "journal";
 
 ## Name der JSON-Datei mit Paketinformationen
 
@@ -149,19 +149,32 @@ my $newOrgs = 0;
 my $argP = first_index { $_ eq '--packages' } @ARGV;
 my $argJ = first_index { $_ eq '--json' } @ARGV;
 my $argPost = first_index { $_ eq '--post' } @ARGV;
-my $argAltEndpoint = first_index { $_ eq '--endpoint_zdb' } @ARGV;
+my $argEndpoint = first_index { $_ eq '--endpoint' } @ARGV;
 my $argNewOrgs = first_index { $_ eq '--new_orgs' } @ARGV;
+my $argType = first_index { $_ eq '--pub_type' } @ARGV;
 
 if($ARGV[$argPost+1] && index($ARGV[$argPost+1], "http") == 0){
   $gokbCreds{'base'} = $ARGV[$argPost+1];
+}
+
+if( $argType >= 0) {
+  if($ARGV[$argType+1] && any { $_ eq $ARGV[$argType+1] } ("journal","book","all") ) {
+    $requestedType = $ARGV[$argType+1];
+  }else{
+    die "Ungültiger Materialtyp! Möglich sind 'journal'(Standard), 'book' und 'all'";
+  }
 }
 
 if($argNewOrgs >= 0){
   $newOrgs = 1;
 }
 
-if($argAltEndpoint >= 0){
-  $endpoint = "zdb";
+if( $argEndpoint >= 0) {
+  if($ARGV[$argEndpoint+1] && any { $_ eq $ARGV[$argEndpoint+1] } ("zdb","natliz","gvk") ) {
+    $endpoint = $ARGV[$argEndpoint+1];
+  }else{
+    die "Ungültiger Endpunkt! Möglich sind 'zdb', 'natliz' und 'gvk'(Standard)";
+  }
 }
 
 if(!$gokbCreds{'base'}){
@@ -277,7 +290,7 @@ if(scalar @ARGV == 0 || (!$argJ && !$argP)){
   say STDOUT "Mögliche Parameter sind:";
   say STDOUT "'--packages \"data_source,username,password\"'";
   say STDOUT "'--json [\"Sigel\"]'";
-  say STDOUT "'--endpoint_zdb'";
+  say STDOUT "'--endpoint zdb|gvk|natliz'";
   say STDOUT "'--post [\"URL\"]'";
   say STDOUT "'--new_orgs'";
 }
@@ -692,58 +705,26 @@ sub createJSON {
   my $wzfile;
   my $wgfile;
 
-  if(!$filter){
-    if($endpoint eq "gvk"){
-      $wfile = $warningDir->file("Warnings_all.json");
-    }elsif($endpoint eq "zdb"){
-      $wfile = $warningDir->file("Warnings_all_zdb.json");
-    }
-    $wfile->touch();
-    $out_warnings = $wfile->openw();
-
-    if($endpoint eq "gvk"){
-      $wzfile = $warningDir->file("Warnings_zdb_all.json");
-    }elsif($endpoint eq "zdb"){
-      $wzfile = $warningDir->file("Warnings_zdb_all_zdb.json");
-    }
-    $wzfile->touch();
-    $out_warnings_zdb = $wzfile->openw();
-
-    if($endpoint eq "gvk"){
-      $wgfile = $warningDir->file("Warnings_gvk_all.json");
-    }elsif($endpoint eq "zdb"){
-      $wgfile = $warningDir->file("Warnings_gvk_all_zdb.json");
-    }
-    $wgfile->touch();
-    $out_warnings_gvk = $wgfile->openw();
+  if($filter){
+    $warningDir = $warningDir->subdir($filter);
+    $warningDir->mkpath({verbose => 0});
   }
-  else{
-    $wdir = $warningDir->subdir($filter);
-    $wdir->mkpath({verbose => 0});
-    if($endpoint eq "gvk"){
-      $wfile = $wdir->file("Warnings_$filter.json");
-    }elsif($endpoint eq "zdb"){
-      $wfile = $wdir->file("Warnings_".$filter."_zdb.json");
-    }
-    $wfile->touch();
-    $out_warnings = $wfile->openw();
 
-    if($endpoint eq "gvk"){
-      $wzfile = $wdir->file("Warnings_zdb_$filter.json");
-    }elsif($endpoint eq "zdb"){
-      $wzfile = $wdir->file("Warnings_zdb_".$filter."_zdb.json");
-    }
-    $wzfile->touch();
-    $out_warnings_zdb = $wzfile->openw();
+  $wfile = $warningDir->file("Warnings_all_$endpoint.json");
 
-    if($endpoint eq "gvk"){
-      $wgfile = $wdir->file("Warnings_gvk_$filter.json");
-    }elsif($endpoint eq "zdb"){
-      $wgfile = $wdir->file("Warnings_gvk_".$filter."_zdb.json");
-    }
-    $wgfile->touch();
-    $out_warnings_gvk = $wgfile->openw();
-  }
+  $wfile->touch();
+  $out_warnings = $wfile->openw();
+
+  $wzfile = $warningDir->file("Warnings_zdb_all_$endpoint.json");
+
+  $wzfile->touch();
+  $out_warnings_zdb = $wzfile->openw();
+
+  $wgfile = $warningDir->file("Warnings_gvk_all_$endpoint.json");
+
+  $wgfile->touch();
+  $out_warnings_gvk = $wgfile->openw();
+
 
   # Statistics
 
@@ -820,10 +801,7 @@ sub createJSON {
 
     my $json_pkg = JSON->new->utf8->canonical;
     my $out_pkg;
-    my $packageFn = $sigel;
-    if($endpoint eq "zdb"){
-      $packageFn .= "_zdb";
-    }
+    my $packageFn = $sigel."_".$endpoint;
 
     if($filter){
       my $pfile = $packageDir->file("$packageFn.json");
@@ -834,7 +812,7 @@ sub createJSON {
 
     say "Processing Package ".($packagesTotal + 1).", ".$sigel."...";
 
-    if($onlyJournals == 1
+    if($requestedType eq "journal"
       &&
         ( $knownSelection{$sigel}{'scope'} !~ /E-Journals/
           ||
@@ -843,8 +821,13 @@ sub createJSON {
             )
         )
     ){
-      say "Keine verknüpften Institutionen in der ZBD. Überspringe Paket.";
+      say "Keine verknüpften Institutionen in der ZBD bzw. nicht als E-Journal-Paket markiert. Überspringe Paket.";
       next;
+
+    }elsif($requestedType eq "book" && $knownSelection{$sigel}{'scope'} ne "E-Books"){
+      say "Paket enthält nicht nur eBooks. Überspringe das Paket!";
+      next;
+
     }
 
     ## Package Header
@@ -891,11 +874,17 @@ sub createJSON {
         name => "GVK-SRU",
         normname => "GVK_SRU"
       );
-    }elsif($endpoint eq 'zdb' || $pkgType == "AL"){
+    }elsif($endpoint eq 'zdb' || ($endpoint eq 'gvk' && $pkgType == "AL" )){
       %pkgSource = (
         url => "http://sru.gbv.de/zdbdb",
         name => "ZDB-SRU",
         normname => "ZDB_SRU"
+      );
+    }elsif($endpoint eq 'natliz'){
+      %pkgSource = (
+        url => "http://sru.gbv.de/natliz",
+        name => "Natliz-SRU",
+        normname => "Natliz_SRU"
       );
     }
 
@@ -922,11 +911,14 @@ sub createJSON {
 
     $package{'tipps'} = [];
     my %attrs;
+
     if($endpoint eq "gvk" && $pkgType eq "NL"){
       my $qryString = 'pica.xpr='.$sigel;
 
-      if($onlyJournals == 1){
+      if($requestedType eq "journal"){
         $qryString .= ' and (pica.mak=Ob* or pica.mak=Od*)';
+      }elsif($requestedType eq "book"){
+        $qryString .= ' and pica.mak=Oa*';
       }
 
       $qryString .= ' sortBy year/sort.ascending';
@@ -938,11 +930,21 @@ sub createJSON {
         parser => 'picaxml',
         _max_results => 5
       );
-    }elsif($endpoint eq "zdb" || $pkgType eq "AL"){
+    }elsif($endpoint eq "zdb" || ($endpoint eq "gvk" && $pkgType eq "AL" )){
       my $qryString = 'pica.isl='.$sigel;
 
       %attrs = (
         base => 'http://sru.gbv.de/zdbdb',
+        query => $qryString,
+        recordSchema => 'picaxml',
+        parser => 'picaxml',
+        _max_results => 5
+      );
+    }elsif($endpoint eq "natliz"){
+      my $qryString = 'pica.xpr='.$sigel;
+
+      %attrs = (
+        base => 'http://sru.gbv.de/natliz',
         query => $qryString,
         recordSchema => 'picaxml',
         parser => 'picaxml',
@@ -971,6 +973,7 @@ sub createJSON {
       my %titleInfo;
       my $id;
       my @eissn = ();
+      my @pissn = ();
       my @relatedPrev = ();
 
       my @titleWarnings;
@@ -981,14 +984,13 @@ sub createJSON {
 
       if($isJournal){
         $gokbType = "Serial";
-      }elsif(substr($materialType, 1, 1) eq 'a'){
-        $gokbType = "Monograph";
-      }
-
-      if($isJournal){
         $gokbMedium = "Journal";
-      }elsif(substr($materialType, 1, 1) eq 'a'){
+      }elsif($typeChar eq 'a'){
+        $gokbType = "Monograph";
         $gokbMedium = "Book";
+      }else{
+        say "Kann Materialtyp für $ppn nicht bestimmen...";
+        next;
       }
 
       # -------------------- Identifiers --------------------
@@ -1001,9 +1003,14 @@ sub createJSON {
           'type' => "gvk_ppn",
           'value' => $ppn
         };
-      }elsif($endpoint eq "zdb" || $pkgType eq "AL"){
+      }elsif( $endpoint eq "zdb" || ($endpoint eq "gvk" && $pkgType eq "AL") ){
         push @{ $titleInfo{'identifiers'} } , {
           'type' => "zdb_ppn",
+          'value' => $ppn
+        };
+      }elsif($endpoint eq "natliz"){
+        push @{ $titleInfo{'identifiers'} } , {
+          'type' => "natliz_ppn",
           'value' => $ppn
         };
       }
@@ -1097,21 +1104,6 @@ sub createJSON {
                     '005A0' => $eissnValue[$subfPos+1],
                     'comment' => 'ISSN konnte nicht validiert werden.'
                   };
-                }elsif($allISSN{$eissn}){
-                  say "eISSN $eissn in Titel $id wurde bereits vergeben!";
-
-                  $duplicateISSNs++;
-                  $pkgStats{'duplicateISSNsPkg'}++;
-
-                  push @titleWarnings, {
-                    '005A0' => $eissn,
-                    'comment' => 'gleiche eISSN nach Titeländerung?'
-                  };
-
-                  push @titleWarningsZDB, {
-                    '005A0' => $eissn,
-                    'comment' => 'gleiche eISSN nach Titeländerung?'
-                  };
                 }elsif($globalIDs{$id} && none {$_ eq $eissn} @globalIssns){
                   say "eISSN $eissn kommt in bereits erschlossenem Titel $id nicht vor!";
 
@@ -1132,6 +1124,23 @@ sub createJSON {
                     'value' => $eissn
                   };
 
+                  if($allISSN{$eissn}){
+                    say "eISSN $eissn in Titel $id wurde bereits vergeben!";
+
+                    $duplicateISSNs++;
+                    $pkgStats{'duplicateISSNsPkg'}++;
+
+                    push @titleWarnings, {
+                      '005A0' => $eissn,
+                      'comment' => 'gleiche eISSN nach Titeländerung?'
+                    };
+
+                    push @titleWarningsZDB, {
+                      '005A0' => $eissn,
+                      'comment' => 'gleiche eISSN nach Titeländerung?'
+                    };
+                  }
+
                   $allISSN{$eissn} = pica_value($titleRecord, '021Aa');
                 }
               }
@@ -1145,39 +1154,73 @@ sub createJSON {
         ## pISSN
 
         if(pica_value($titleRecord, '005P0')){
-          my $pissn = formatISSN(pica_value($titleRecord, '005P0'));
+          my @issnValues = @{pica_fields($titleRecord, '005P')};
 
-          if($pissn eq ""){
-            print "Parallel-ISSN ".pica_value($titleRecord, '005P0');
-            print " in Titel $id scheint ungültig zu sein!\n";
+          foreach my $issnValue (@issnValues) {
+            my @issnValue = @{ $issnValue };
+            my $subfPos = 0;
 
-            push @titleWarnings, {
-              '005A0' => $pissn
-            };
-            push @titleWarningsZDB, {
-              '005A0' => $pissn
-            };
-          }elsif($allISSN{$pissn}){
-            print "Parallel-ISSN $pissn";
-            print " in Titel $id wurde bereits als eISSN vergeben!\n";
+            foreach my $subField (@issnValue){
+              if($subField eq '0'){
+                my $pissn = formatISSN($issnValue[$subfPos+1]);
 
-            $wrongISSN++;
-            $pkgStats{'wrongISSNPkg'}++;
+                if($pissn eq ""){
+                  print "Parallel-ISSN ".pica_value($titleRecord, '005P0');
+                  print " in Titel $id scheint ungültig zu sein!\n";
 
-            push @titleWarnings, {
-              '005P0' => $pissn,
-              'comment' => 'gleiche Vorgänger-eISSN als Parallel-ISSN?'
-            };
-            push @titleWarningsZDB, {
-              '005P0' => $pissn,
-              'comment' => 'gleiche Vorgänger-eISSN als Parallel-ISSN?'
-            };
+                  push @titleWarnings, {
+                    '005P0' => $pissn
+                  };
+                  push @titleWarningsZDB, {
+                    '005P0' => $pissn
+                  };
+                }else{
+
+                  if($allISSN{$pissn}){
+                    print "Parallel-ISSN $pissn";
+                    print " in Titel $id wurde bereits als eISSN vergeben!\n";
+
+                    $wrongISSN++;
+                    $pkgStats{'wrongISSNPkg'}++;
+
+                    push @titleWarnings, {
+                      '005P0' => $pissn,
+                      'comment' => 'gleiche Vorgänger-eISSN als Parallel-ISSN?'
+                    };
+                    push @titleWarningsZDB, {
+                      '005P0' => $pissn,
+                      'comment' => 'gleiche Vorgänger-eISSN als Parallel-ISSN?'
+                    };
+                  }
+
+                  push @pissn, $pissn;
+
+                  push @{ $titleInfo{'identifiers'}} , {
+                    'type' => "issn",
+                    'value' => $pissn
+                  };
+                }
+              }
+              $subfPos++;
+            }
           }
         }
-      }elsif(substr($materialType, 0, 2) eq 'Oa'){
-        if(pica_value($titleRecord, '004A')){
-          my @isbnFields = @{ pica_fields($titleRecord, '004A') };
+
+      }elsif($gokbMedium eq "Book"){
+        $id = $ppn;
+
+        if(pica_value($titleRecord, '004AA')){
+          my $isbn = pica_value($titleRecord, '004AA');
+          $isbn =~ s/-\s//g;
+
+          push @{ $titleInfo{'identifiers'}} , {
+            'type' => "isbn",
+            'value' => $isbn
+          };
         }
+      }else{
+        say "Kann Materialtyp für $ppn nicht bestimmen...";
+        next;
       }
 
       ## Andere Identifier, z.B. OCLC-No.
@@ -1205,12 +1248,13 @@ sub createJSON {
       # Check, if the title is a journal
       # (shouldn't be necessary since it should be included in the search query)
 
-      if($onlyJournals == 1 && !$isJournal){
+      if(($requestedType eq "journal" && !$isJournal) || ($requestedType eq "book" && $isJournal)){
         print "Überspringe Titel ".pica_value($titleRecord, '021Aa');
         print ", Materialcode: $materialType\n";
 
         next;
       }
+
       if(pica_value($titleRecord, '006Z0')){
         print STDOUT "Verarbeite Titel $currentTitle";
         print STDOUT " von Paket $sigel ($id)\n";
@@ -1236,6 +1280,10 @@ sub createJSON {
           $titleField =~ s/@//;
         }
         $titleInfo{'name'} = $titleField;
+
+        if(pica_value($titleRecord, '021Ad') && $typeChar eq 'a'){
+          $titleInfo{'name'} .= " - ".pica_value($titleRecord, '021Ad');
+        }
         
       }else{
         say "Keinen Titel für ".$ppn." erkannt, überspringe Titel!";
@@ -1834,7 +1882,7 @@ sub createJSON {
           if($endpoint eq "gvk" && $pkgType eq "NL"){
             my $relQryString = 'pica.zdb='.$relatedID;
 
-            if($onlyJournals == 1){
+            if($requestedType eq "journal"){
               $relQryString .= ' and (pica.mak=Ob* or pica.mak=Od*)';
             }
 
@@ -2134,11 +2182,13 @@ sub createJSON {
       # -------------------- TIPPS (Online-Ressourcen) --------------------
 
       my @onlineSources;
-      if($endpoint eq "gvk" && $pkgType eq "NL"){
+
+      if(($endpoint eq "gvk" && $pkgType eq "NL") || $endpoint eq "natliz"){
         @onlineSources= @{ pica_fields($titleRecord, '009P[05]') };
-      }elsif($endpoint eq "zdb" || $pkgType eq "AL"){
+      }elsif($endpoint eq "zdb" || ($endpoint eq "gvk" && $pkgType eq "AL")){
         @onlineSources= @{ pica_fields($titleRecord, '009Q') };
       }
+
       my $numSources = scalar @onlineSources;
       my $sourcePos = 0;
       my $noViableUrl = 1;
@@ -2162,6 +2212,7 @@ sub createJSON {
           'zdb' => ['H;','A;','D;']
         );
         my $publicComments = "";
+        my $licenceComment = "";
         my $subfPos = 0;
         $sourcePos++;
 
@@ -2188,8 +2239,20 @@ sub createJSON {
 
           }elsif($subField eq 'z'){
             $publicComments = $eSource[$subfPos+1];
+
+          }elsif($subField eq '4'){
+            $licenceComment = $eSource[$subfPos+1];
+
           }
           $subfPos++;
+        }
+
+        if($endpoint eq "natliz"){
+          if($pkgType eq "NL"){
+            $publicComments = "NL";
+          }else{
+            $publicComments = $licenceComment;
+          }
         }
 
         if(!$sourceURL || length $sourceURL > 255 || $sourceURL eq ""){
@@ -2205,7 +2268,7 @@ sub createJSON {
               $internalCommentIsValid = 1;
             }
           }
-        }elsif($endpoint eq "zdb" || $pkgType eq "AL"){
+        }elsif($endpoint eq "zdb" || ($endpoint eq "gvk" && $pkgType eq "AL")){
           foreach my $vCom ( @{ $validComments{'zdb'} } ){
             my $corCom = $vCom =~ s/;//g;
 
@@ -2213,6 +2276,8 @@ sub createJSON {
               $internalCommentIsValid = 1;
             }
           }
+        }elsif($endpoint eq "natliz"){
+          $internalCommentIsValid = 1;
         }
 
         if($pkgType eq "NL"){
@@ -2387,6 +2452,7 @@ sub createJSON {
             }
           }
         }
+
         $tipp{'coverage'} = [];
         push @{ $tipp{'coverage'} } , {
           'startDate' => $startDate ? $startDate : "",
@@ -2593,10 +2659,7 @@ sub createJSON {
   # Write collected titles & orgs to file
 
   if($filter){
-    my $tfileName = "titles_$filter";
-    if($endpoint eq "zdb"){
-      $tfileName .= "_zdb";
-    }
+    my $tfileName = "titles_$filter"."_"."$endpoint";
     my $tfile = $titleDir->file("$tfileName.json");
     $tfile->touch();
 
@@ -2607,12 +2670,9 @@ sub createJSON {
     close($out_titles);
   }
 
-  my $ofileName = "gnd_orgs";
+  my $ofileName = "gnd_orgs_$endpoint";
   my $out_orgs;
 
-  if($endpoint eq "zdb"){
-    $ofileName .= "_zdb";
-  }
   my $orgsFile;
 
   if(!$filter){
