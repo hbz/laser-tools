@@ -344,6 +344,7 @@ sub getZdbName {
         $pkgInfos{'type'} = pica_value($packageInstance, '035Pi')
           ? pica_value($packageInstance, '035Pi')
           : "";
+        $pkgInfos{'provider'} =~ s/Anbieter: //;
 
         if(index($pkgInfos{'provider'}, ";") >= 0){
           ($pkgInfos{'provider'}, $pkgInfos{'platform'}) = split(";",$pkgInfos{'provider'});
@@ -843,6 +844,7 @@ sub createJSON {
     my $provider = $knownSelection{$sigel}{'provider'};
     my $pkgName = $knownSelection{$sigel}{'name'};
 
+    $provider =~ s/Anbieter:\s//;
     $pkgName =~ s/:\s//g;
 
     my $pkgYear = strftime '%Y', localtime;
@@ -867,6 +869,8 @@ sub createJSON {
     my %pkgSource;
 
     my $pkgType = $knownSelection{$sigel}{'type'};
+
+    say "Package Type is: $pkgType, endpoint is $endpoint";
 
     if($endpoint eq 'gvk' && $pkgType == "NL"){
       %pkgSource = (
@@ -938,7 +942,7 @@ sub createJSON {
         query => $qryString,
         recordSchema => 'picaxml',
         parser => 'picaxml',
-        _max_results => 5
+        _max_results => 3
       );
     }elsif($endpoint eq "natliz"){
       my $qryString = 'pica.xpr='.$sigel;
@@ -1169,10 +1173,10 @@ sub createJSON {
                   print " in Titel $id scheint ungültig zu sein!\n";
 
                   push @titleWarnings, {
-                    '005P0' => $pissn
+                    '005P0' => $issnValue[$subfPos+1]
                   };
                   push @titleWarningsZDB, {
-                    '005P0' => $pissn
+                    '005P0' => $issnValue[$subfPos+1]
                   };
                 }else{
 
@@ -1184,11 +1188,11 @@ sub createJSON {
                     $pkgStats{'wrongISSNPkg'}++;
 
                     push @titleWarnings, {
-                      '005P0' => $pissn,
+                      '005P0' => $issnValue[$subfPos+1],
                       'comment' => 'gleiche Vorgänger-eISSN als Parallel-ISSN?'
                     };
                     push @titleWarningsZDB, {
-                      '005P0' => $pissn,
+                      '005P0' => $issnValue[$subfPos+1],
                       'comment' => 'gleiche Vorgänger-eISSN als Parallel-ISSN?'
                     };
                   }
@@ -1208,15 +1212,26 @@ sub createJSON {
 
       }elsif($gokbMedium eq "Book"){
         $id = $ppn;
+        if($endpoint eq "gvk"){
+          if(pica_value($titleRecord, '004AA')){
+            my $isbn = pica_value($titleRecord, '004AA');
+            $isbn =~ s/-\s//g;
 
-        if(pica_value($titleRecord, '004AA')){
-          my $isbn = pica_value($titleRecord, '004AA');
-          $isbn =~ s/-\s//g;
+            push @{ $titleInfo{'identifiers'}} , {
+              'type' => "isbn",
+              'value' => $isbn
+            };
+          }
+        }elsif($endpoint eq "natliz"){
+          if(pica_value($titleRecord, '004JA')){
+            my $isbn = pica_value($titleRecord, '004JA');
+            $isbn =~ s/-\s//g;
 
-          push @{ $titleInfo{'identifiers'}} , {
-            'type' => "isbn",
-            'value' => $isbn
-          };
+            push @{ $titleInfo{'identifiers'}} , {
+              'type' => "isbn",
+              'value' => $isbn
+            };
+          }
         }
       }else{
         say "Kann Materialtyp für $ppn nicht bestimmen...";
@@ -1289,10 +1304,12 @@ sub createJSON {
         say "Keinen Titel für ".$ppn." erkannt, überspringe Titel!";
 
         push @titleWarnings, {
-            '021Aa' => pica_value($titleRecord, '021Aa')
+            '021Aa' => pica_value($titleRecord, '021Aa'),
+            'comment' => "Kein Titel gefunden!"
         };
         push @titleWarningsZDB, {
-            '021Aa' => pica_value($titleRecord, '021Aa')
+            '021Aa' => pica_value($titleRecord, '021Aa'),
+            'comment' => "Kein Titel gefunden!"
         };
 
         next;
@@ -1340,10 +1357,12 @@ sub createJSON {
               my $fullField = "031N$subField";
 
               push @titleWarnings, {
-                  $fullField => $releaseNote[$subfPos+1]
+                  $fullField => $releaseNote[$subfPos+1],
+                  'comment' => "Nicht-Zahlenwerte in Zahlenfeld"
               };
               push @titleWarningsZDB, {
-                  $fullField => $releaseNote[$subfPos+1]
+                  $fullField => $releaseNote[$subfPos+1],
+                  'comment' => "Nicht-Zahlenwerte in Zahlenfeld"
               };
             }
           }
@@ -1443,10 +1462,13 @@ sub createJSON {
       );
 
       my @dts = transformDate(\%dates);
+      if($isJournal){
+        $titleInfo{'publishedFrom'} = convertToTimeStamp($dts[0][0], 0);
 
-      $titleInfo{'publishedFrom'} = convertToTimeStamp($dts[0][0], 0);
-
-      $titleInfo{'publishedTo'} = convertToTimeStamp($dts[0][1], 1);
+        $titleInfo{'publishedTo'} = convertToTimeStamp($dts[0][1], 1);
+      }else{
+        $titleInfo{'dateFirstOnline'} = convertToTimeStamp($dts[0][0], 0)
+      }
 
       # -------------------- Publisher --------------------
 
@@ -1486,15 +1508,18 @@ sub createJSON {
             if($subField eq 'n'){
               if($tempPub){
                 push @titleWarnings, {
-                  '033(A/B)' => \@pub
+                  '033(A/B)' => \@pub,
+                  'comment' => "Mehrere Verlage in einem PICA-Feld!"
                 };
                 if($endpoint eq "gvk" && $pkgType eq "NL"){
                   push @titleWarningsGVK, {
-                    '033(A/B)' => \@pub
+                    '033(A/B)' => \@pub,
+                    'comment' => "Mehrere Verlage in einem PICA-Feld!"
                   };
                 }elsif($endpoint eq "zdb" || $pkgType eq "AL"){
                   push @titleWarningsZDB, {
-                    '033(A/B)' => \@pub
+                    '033(A/B)' => \@pub,
+                    'comment' => "Mehrere Verlage in einem PICA-Feld!"
                   };
                 }
               }
@@ -1505,10 +1530,12 @@ sub createJSON {
 
               if( $pub[$subfPos+1] =~ /[a-zA-Z\.,\(\)]+/ ) {
                 push @titleWarnings, {
-                  '033(A/B)h' => $pub[$subfPos+1]
+                  '033(A/B)h' => $pub[$subfPos+1],
+                  'comment' => "Keine reine Jahresangabe für Verlag"
                 };
                 push @titleWarningsZDB, {
-                  '033(A/B)h' => $pub[$subfPos+1]
+                  '033(A/B)h' => $pub[$subfPos+1],
+                  'comment' => "Keine reine Jahresangabe für Verlag"
                 };
                 if($pub[$subfPos+1] eq 'früher' || $pub[$subfPos+1] eq 'anfangs'){
                   $pubStatus = 'Previous'
@@ -1609,10 +1636,12 @@ sub createJSON {
             $pkgStats{'noPubMatchPkg'}++;
 
             push @titleWarnings, {
-              '033(A/B)n' => $preCorrectedPub
+              '033(A/B)n' => $preCorrectedPub,
+              'comment' => "Verlagsname konnte nicht verifiziert werden."
             };
             push @titleWarningsZDB, {
-              '033(A/B)n' => $preCorrectedPub
+              '033(A/B)n' => $preCorrectedPub,
+              'comment' => "Verlagsname konnte nicht verifiziert werden."
             };
           }
         }
@@ -1644,12 +1673,17 @@ sub createJSON {
                 $ncsuPub = searchNcsuOrgs($pubName);
 
                 if(!$ncsuPub){
-                  push @titleWarnings, {
-                    '029Ga' => \@pub
-                  };
-                  push @titleWarningsZDB, {
-                    '029Ga' => \@pub
-                  };
+                  if($endpoint eq 'zdb'){
+                    push @titleWarnings, {
+                      '029Aa' => $pubName,
+                      'comment' => "GND-Org ist nicht in der GOKb vorhanden."
+                    };
+                  }else{
+                    push @titleWarnings, {
+                      '029Ga' => $pubName,
+                      'comment' => "GND-Org ist nicht in der GOKb vorhanden."
+                    };
+                  }
                 }
               }elsif($subField eq 'M' || $subField eq '7'){
                 $authType = substr($pub[$subfPos+1],0,2);
@@ -1663,10 +1697,22 @@ sub createJSON {
             }
             if($isParent == 1){
               say "$id - Parent: $pubName, Child: $branch";
+
+              if($endpoint eq 'zdb'){
+                push @titleWarnings, {
+                  '029A' => \@pub,
+                  'comment' => "GND-Org ist nicht eigenständig."
+                };
+              }else{
+                push @titleWarnings, {
+                  '029G' => \@pub,
+                  'comment' => "GND-Org ist nicht eigenständig."
+                };
+              }
               next;
             }
 
-            if($authType && $authType eq 'Tb' && $gndID){
+            if($authType && $authType =~ /Tb/ && $gndID){
 
               my $orgURI = "http://d-nb.info/".$gndID;
 
@@ -1814,10 +1860,12 @@ sub createJSON {
 
                 unless($relatedDates =~ /[0-9]{4}\s?-\s?[0-9]{0,4}/){
                   push @titleWarnings, {
-                    '039Ef' => $relTitle[$subfPos+1]
+                    '039Ef' => $relTitle[$subfPos+1],
+                    'comment' => 'Keine gültige Datumsangabe.'
                   };
                   push @titleWarningsGVK, {
-                    '039Ef' => $relTitle[$subfPos+1]
+                    '039Ef' => $relTitle[$subfPos+1],
+                    'comment' => 'Keine gültige Datumsangabe.'
                   };
                 }
               }
@@ -1862,10 +1910,12 @@ sub createJSON {
 
               unless($relatedDates =~ /[0-9]{4}\s?-?\s?[0-9]{0,4}/ || $relatedDates =~ /[a-zA-Z=\/]+/){
                 push @titleWarnings, {
-                  '039EH' => $relTitle[$subfPos+1]
+                  '039EH' => $relTitle[$subfPos+1],
+                  'comment' => 'Keine gültige Datumsangabe.'
                 };
                 push @titleWarningsZDB, {
-                  '039EH' => $relTitle[$subfPos+1]
+                  '039EH' => $relTitle[$subfPos+1],
+                  'comment' => 'Keine gültige Datumsangabe.'
                 };
               }
             }
@@ -1935,7 +1985,7 @@ sub createJSON {
                 my @relISIL = pica_values($relRecord, '017B');
 
                 foreach my $relISIL (@relISIL){
-                  if($known{$relISIL} || $relISIL eq $filter){
+                  if( $known{$relISIL} || ($filter && $relISIL eq $filter) ){
                     $relIsNl = 1;
                   }
                 }
@@ -2226,10 +2276,12 @@ sub createJSON {
 
             if($sourceURL =~ /http\/\//){
               push @titleWarnings , {
-                '009P0'=> $sourceURL
+                '009P0'=> $sourceURL,
+                'comment' => "URL ist ungültig (: nach http fehlt)"
               };
               push @titleWarningsGVK , {
-                '009P0'=> $sourceURL
+                '009P0'=> $sourceURL,
+                'comment' => "URL ist ungültig (: nach http fehlt)"
               };
               $pkgStats{'nlURLs'}++;
               $sourceURL =~ s/http\/\//http:\/\//;
@@ -2242,7 +2294,6 @@ sub createJSON {
 
           }elsif($subField eq '4'){
             $licenceComment = $eSource[$subfPos+1];
-
           }
           $subfPos++;
         }
@@ -2284,16 +2335,18 @@ sub createJSON {
           if($publicComments ne "Deutschlandweit zugänglich" && $publicComments ne "NL"){
             $pkgStats{'otherURLs'}++;
             $toSkip = 1;
+            say STDOUT "Skipping NL-TIPP in $id.. wrong Public Comment: $publicComments, (internal=$internalComments)";
             next;
           }else{
             $pkgStats{'nlURLs'}++;
+            say STDOUT "Using NL-TIPP in $id.. Public Comment: $publicComments, (internal=$internalComments)";
             $isNL = 1;
           }
 
-          if( $internalCommentIsValid == 1 && !$toSkip){
+          if($internalCommentIsValid == 1 && !$toSkip){
             $noViableUrl = 0;
           }else{
-            say STDOUT "Skipping NL-TIPP in $id.. wrong Type: $internalComments, $publicComments";
+            say STDOUT "Skipping NL-TIPP in $id.. wrong Internal Comment: $internalComments";
             $toSkip = 1;
             next;
           }
@@ -2310,6 +2363,7 @@ sub createJSON {
         }
 
         if($toSkip){
+          say STDOUT "Skipping TIPP because of given Comments!";
           next;
         }
 
@@ -2331,26 +2385,30 @@ sub createJSON {
             $pkgStats{'brokenURL'}++;
 
             push @titleWarnings , {
-              '009P0'=> $sourceURL
+              '009P0'=> $sourceURL,
+              'comment' => 'Aus der URL konnte kein Host ermittelt werden.'
             };
 
             push @titleWarningsZDB , {
-              '009Qx'=> $sourceURL
+              '009Qx'=> $sourceURL,
+              'comment' => 'Aus der URL konnte kein Host ermittelt werden.'
             };
-
+            say "Could not extract host of URL $url";
             next;
           }
         }else{
           say "Looks like a wrong URL > ".$id;
           $pkgStats{'brokenURL'}++;
           push @titleWarnings , {
-            '009P0'=> $sourceURL
+            '009P0'=> $sourceURL,
+            'comment' => 'URL-Schema konnte nicht ermittelt werden!'
           };
 
           push @titleWarningsZDB , {
-            '009Qx'=> $sourceURL
+            '009Qx'=> $sourceURL,
+            'comment' => 'URL-Schema konnte nicht ermittelt werden!'
           };
-
+          say "Could not extract scheme of URL $url";
           next;
         }
 
@@ -2380,11 +2438,18 @@ sub createJSON {
             my $datePartPos = 0;
 
             foreach my $dp (@datesParts){
-              if( $dp ne " " && ($dp =~ /[a-zA-Z]+/ || $dp !~ /^\s?[0-9]*\.?[0-9]{4},?[0-9]*\s?$/) ){
-                push @titleWarnings , {'009P[05]'=> $fieldParts[1]};
-                push @titleWarningsZDB , {'009Qx'=> $fieldParts[1]};
+              if( $dp ne " " && ($dp =~ /[a-zA-Z]+/
+                  ||
+                  $dp !~ /^\s?[0-9]*\.?[0-9]{4},?[0-9]*\s?$/)
+              ){
+                push @titleWarnings , {
+                  '009P[05]'=> $fieldParts[1]
+                };
+                push @titleWarningsZDB , {
+                  '009Qx'=> $fieldParts[1]
+                };
               }
-              $dp = $dp =~ s/\s//g;
+              $dp =~ s/\s//g;
 
               my ($tempVol) = $dp =~ /([0-9]+)\.[0-9]{4}/;
               my ($tempYear) = $dp =~ /[^,]\.?([0-9]{4})[\s\/,]+/;
@@ -2424,7 +2489,6 @@ sub createJSON {
                   }
                 }
               }
-
               # Issue
 
               if($tempIss && $tempIss ne ""){
@@ -2516,16 +2580,25 @@ sub createJSON {
       }
 
       if(scalar @titleWarnings > 0){
+        push @titleWarnings, {
+            'title' => $titleInfo{'name'}
+        };
         $authorityNotes{$knownSelection{$sigel}{'authority'}}{$sigel}{'warnings'}{$id} =
           \@titleWarnings;
       }
 
       if(scalar @titleWarningsZDB > 0){
+        push @titleWarningsZDB, {
+            'title' => $titleInfo{'name'}
+        };
         $authorityNotesZDB{$knownSelection{$sigel}{'authority'}}{$sigel}{'warnings'}{$id} =
           \@titleWarningsZDB;
       }
 
       if(scalar @titleWarningsGVK > 0){
+        push @titleWarningsGVK, {
+            'title' => $titleInfo{'name'}
+        };
         $authorityNotesGVK{$knownSelection{$sigel}{'authority'}}{$sigel}{'warnings'}{$id} =
           \@titleWarningsGVK;
       }
