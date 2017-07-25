@@ -22,6 +22,9 @@
 # --new_orgs
 #  * überträgt gefundene Körperschaften mit GND-ID an die GOKb
 #  * funktioniert nur in Verbindung mit --post
+# -- pub_type
+#  * Schränkt die verarbeitete Materialart ein
+#  * Mögliche Werte: 'journal' (Standard), 'book', 'all'
 
 use v5.22;
 use strict;
@@ -293,6 +296,7 @@ if(scalar @ARGV == 0 || (!$argJ && !$argP)){
   say STDOUT "'--endpoint zdb|gvk|natliz'";
   say STDOUT "'--post [\"URL\"]'";
   say STDOUT "'--new_orgs'";
+  say STDOUT "'--pub_type journal|book|all'"
 }
 
 # Query Sigelverzeichnis via SRU for package metadata
@@ -825,7 +829,7 @@ sub createJSON {
       say "Keine verknüpften Institutionen in der ZBD bzw. nicht als E-Journal-Paket markiert. Überspringe Paket.";
       next;
 
-    }elsif($requestedType eq "book" && $knownSelection{$sigel}{'scope'} ne "E-Books"){
+    }elsif($requestedType eq "book" && $knownSelection{$sigel}{'scope'} ne "E-Books" && $endpoint ne "natliz"){
       say "Paket enthält nicht nur eBooks. Überspringe das Paket!";
       next;
 
@@ -845,7 +849,7 @@ sub createJSON {
     my $pkgName = $knownSelection{$sigel}{'name'};
 
     $provider =~ s/Anbieter:\s//;
-    $pkgName =~ s/:\s//g;
+    $pkgName =~ s/:/-/g;
 
     my $pkgYear = strftime '%Y', localtime;
 
@@ -891,12 +895,13 @@ sub createJSON {
         normname => "Natliz_SRU"
       );
     }
+    my $pkgNoProv = "$pkgName: $pkgType: $pkgYear";
 
     $package{'packageHeader'} = {
       name => ($provider ?  "$provider: " : "")."$pkgName: $pkgType: $pkgYear",
       identifiers => [{ type => "isil", value => $sigel }],
       additionalProperties => [],
-      variantNames => [],
+      variantNames => [$pkgNoProv],
       scope => "",
       listStatus => "In Progress",
       breakable => "No",
@@ -1223,14 +1228,37 @@ sub createJSON {
             };
           }
         }elsif($endpoint eq "natliz"){
-          if(pica_value($titleRecord, '004JA')){
-            my $isbn = pica_value($titleRecord, '004JA');
-            $isbn =~ s/-\s//g;
-
-            push @{ $titleInfo{'identifiers'}} , {
-              'type' => "isbn",
-              'value' => $isbn
-            };
+          if(pica_value($titleRecord, '004A')){
+            my @isbnValues = @{pica_fields($titleRecord, '004A')};
+            
+            foreach my $isbnValue (@isbnValues) {
+              my @isbnValue = @{ $isbnValue };
+              my $isbn;
+              my $isbnType;
+              my $subfPos = 0;
+              
+              foreach my $subField (@isbnValue) {
+              
+                if($subField eq 'A'){
+                  if(!$isbn){
+                    $isbn = $isbnValue[$subfPos+1];
+                    $isbn =~ s/-\s//g;
+                  }else{
+                    say "Mehrere ISBNs in einem PICA-Feld!";
+                  }
+                }
+                if($subField eq 'f'){
+                  $isbnType = $isbnValue[$subfPos+1];
+                }
+                $subfPos++;
+              }
+              if(!$isbnType || $isbnType eq 'Online'){
+                push @{ $titleInfo{'identifiers'}} , {
+                  'type' => "isbn",
+                  'value' => $isbn
+                };
+              }
+            }
           }
         }
       }else{
@@ -1449,6 +1477,16 @@ sub createJSON {
 
         if(looks_like_number($releaseEnd{'day'}) && $end_month != 0){
           $end_day = $releaseEnd{'day'};
+        }
+      }
+      
+      if($gokbType eq 'Monograph') {
+        if(pica_value($titleRecord, '032@a')){
+          $titleInfo{'editionStatement'} = pica_value($titleRecord, '032@a');
+          
+#           if(pica_value($titleRecord, '032@a') =~ /([0-9]+)\./){
+#             $titleInfo{'editionNumber'} = pica_value($titleRecord, '032@a') =~ /([0-9]+)\./;
+#           }
         }
       }
 
@@ -2258,8 +2296,8 @@ sub createJSON {
         my $isNL = 0;
         my $toSkip;
         my %validComments = (
-          'gvk' => ['Verlag','Digitalisierung','Agentur'],
-          'zdb' => ['H;','A;','D;']
+          'gvk' => ['Verlag','Digitalisierung','Agentur','Archivierung','Langzeitarchivierung','Aggregator'],
+          'zdb' => ['H;','D;','A;','C;','L;','G;']
         );
         my $publicComments = "";
         my $licenceComment = "";
@@ -2425,6 +2463,7 @@ sub createJSON {
         my $endVol = "";
         my $endIss = "";
         my $endDate = "";
+        my $covNote = "";
 
 
         if($internalComments =~ ";"){
@@ -2433,6 +2472,7 @@ sub createJSON {
           if(scalar @fieldParts == 2){
 
             # Split into start and end
+            $covNote = $fieldParts[1];
 
             my @datesParts = split /\-/, $fieldParts[1];
             my $datePartPos = 0;
@@ -2449,10 +2489,9 @@ sub createJSON {
                   '009Qx'=> $fieldParts[1]
                 };
               }
-              $dp =~ s/\s//g;
 
               my ($tempVol) = $dp =~ /([0-9]+)\.[0-9]{4}/;
-              my ($tempYear) = $dp =~ /[^,]\.?([0-9]{4})[\s\/,]+/;
+              my ($sos, $tempYear, $eos) = $dp =~ m/(^|\s|\.)([0-9]{4})(\/|,|\s|$)/g;
               my ($tempIss) = $dp =~ /,([0-9]+)\s*$/;
 
               # Date
@@ -2526,7 +2565,7 @@ sub createJSON {
           'endVolume' => $endVol,
           'endIssue' => $endIss,
           'coverageDepth' => "Fulltext",
-          'coverageNote' => $pkgType ? "$pkgType-DE" : "",
+          'coverageNote' => $pkgType ? "$pkgType-DE; $covNote" : "$covNote",
           'embargo' => ""
         };
 
