@@ -20,11 +20,23 @@ Mögliche Parameter:
 * Die Datei mit CMS-Paketdaten muss vorhanden sein.
 * Ohne folgendes Paketsigel werden alle Pakete abgearbeitet.
 
+--endpoint ['zdb'|'natliz'|'gvk']
+* ändert die Datenquelle für Titeldaten
+* weglassen für Standardbezug über GVK-SRU
+
+-- pub_type ['journal'|'book'|'all']
+* Schränkt die verarbeitete Materialart ein
+* Mögliche Werte: 'journal' (Standard), 'book', 'all'
+
 --post [URL]
 * Sendet die erschlossenen Daten an eine GOKb-Instanz
 * Folgt keine URL, wird die localhost Standardadresse verwendet.
 * Nur zulässig im Anschluss an --json
 * Die GOKb-Zugangsdaten werden der 'login.json' entnommen. Falls keine gefunden werden, wird nach ihnen gefragt.
+
+--new_orgs
+* überträgt gefundene Körperschaften mit GND-ID an die GOKb
+* funktioniert nur in Verbindung mit --post
 
 ## Beispiel login.json
 
