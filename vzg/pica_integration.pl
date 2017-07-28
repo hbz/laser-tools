@@ -13,9 +13,10 @@
 # --json (ZDB-1-...)
 #  * neue Methode, known_seals.json muss vorhanden sein
 #  * ohne folgendes Paketsigel werden alle Pakete bearbeitet.
-# --endpoint_zdb
+# --endpoint
 #  * ändert die Datenquelle für Titeldaten
 #  * weglassen für Standardbezug über VZG-SRU
+#  * Mögliche Werte: "zdb","natliz","gvk" (Standard)
 # --post (URL)
 #  * folgt keine URL, wird die localhost Standardadresse verwendet
 #  * nur zulässig nach --json
@@ -150,6 +151,7 @@ if(-e 'login.json'){
 
 my $endpoint = "gvk";
 my $newOrgs = 0;
+my $customTarget;
 
 my $argP = first_index { $_ eq '--packages' } @ARGV;
 my $argJ = first_index { $_ eq '--json' } @ARGV;
@@ -160,6 +162,7 @@ my $argType = first_index { $_ eq '--pub_type' } @ARGV;
 
 if($ARGV[$argPost+1] && index($ARGV[$argPost+1], "http") == 0){
   $gokbCreds{'base'} = $ARGV[$argPost+1];
+  $customTarget = 1;
 }
 
 if( $argType >= 0) {
@@ -208,7 +211,7 @@ if($argP >= 0){
       my $post = 0;
 
       if($argPost >= 0){
-        if(!$gokbCreds{'username'} || !$gokbCreds{'password'}){
+        if(!$gokbCreds{'username'} || !$gokbCreds{'password'} || ($customTarget && $customTarget == 1)){
           say STDOUT "GOKb-Benutzername:";
 
           $gokbCreds{'username'} = <STDIN>;
@@ -248,10 +251,12 @@ if($argP >= 0){
     my $post = 0;
 
     if($argPost >= 0){
-      if(!$gokbCreds{'username'} || !$gokbCreds{'password'}){
+      if(!$gokbCreds{'username'} || !$gokbCreds{'password'} || ($customTarget && $customTarget == 1) ){
         say STDOUT "GOKb-Benutzername:";
 
         $gokbCreds{'username'} = <STDIN>;
+
+        $gokbCreds{'username'} =~ s/^[\s\n]+|[\s\n]+$//gm;
 
         say STDOUT "GOKb-Passwort:";
 
@@ -261,8 +266,9 @@ if($argP >= 0){
 
         ReadMode 0;
 
-        chomp $gokbCreds{'password'};
+        $gokbCreds{'password'} =~ s/^[\s\n]+|[\s\n]+$//gm;
       }
+
       if($gokbCreds{'username'} && $gokbCreds{'password'}){
         $post = 1;
       }else{
@@ -298,7 +304,7 @@ if(scalar @ARGV == 0 || (!$argJ && !$argP)){
   say STDOUT "'--endpoint zdb|gvk|natliz'";
   say STDOUT "'--post [\"URL\"]'";
   say STDOUT "'--new_orgs'";
-  say STDOUT "'--pub_type journal|book|all'"
+  say STDOUT "'--pub_type journal|book|all'";
 }
 
 # Query Sigelverzeichnis via SRU for package metadata
@@ -709,6 +715,10 @@ sub createJSON {
 
   # Warnings
 
+  my %authorityNotes;
+  my %authorityNotesZDB;
+  my %authorityNotesGVK;
+  
   my $out_warnings;
   my $out_warnings_zdb;
   my $out_warnings_gvk;
@@ -742,12 +752,6 @@ sub createJSON {
 
   my %globalStats;
 
-  # Warnings
-
-  my %authorityNotes;
-  my %authorityNotesZDB;
-  my %authorityNotesGVK;
-
   # Output file handling
 
   my $json_warning = JSON->new->utf8->canonical;
@@ -766,19 +770,18 @@ sub createJSON {
   
     say "Processing Package ".($packagesTotal + 1).", ".$sigel."...";
     
-    if($requestedType eq "journal"
-      &&
-        ( $knownSelection{$sigel}{'scope'} !~ /E-Journals/
-          ||
-            ( $knownSelection{$sigel}{'zdbOrgs'}
-              && scalar @{$knownSelection{$sigel}{'zdbOrgs'}} == 0
-            )
-        )
-    ){
+    my $pkgScope = $knownSelection{$sigel}{'scope'};
+    my $noZdbOrgs = 0;
+    
+    if($knownSelection{$sigel}{'zdbOrgs'} && scalar @{$knownSelection{$sigel}{'zdbOrgs'}} == 0){
+      $noZdbOrgs = 1;
+    }
+    
+    if($requestedType eq "journal" && ( $pkgScope !~ /E-Journals/ || $noZdbOrgs == 1 )){
       say "Keine verknüpften Institutionen in der ZBD bzw. nicht als E-Journal-Paket markiert. Überspringe Paket.";
       next;
-
     }
+    
     my %currentPackage = %{$knownSelection{$sigel}};
     
     my ($package, $pkgStats, $pkgWarn) = processPackage(%currentPackage);
@@ -879,22 +882,22 @@ sub createJSON {
 
   say $out_orgs $json_orgs->pretty(1)->encode( \%orgsToAdd );
 
-  if(scalar @unknownRelIds > 0){
-    my $ufn = "Unknown IDs";
-    if($filter){
-      $ufn .= " $filter";
-    }
-    my $ufile = file($ufn);
-    $ufile->touch();
-
-    my $out_unknown = $ufile->openw();
-
-    foreach my $unknownId (@unknownRelIds){
-      if(!$globalIDs{$unknownId}){
-        say $out_unknown $unknownId;
-      }
-    }
-  }
+#   if(scalar @unknownRelIds > 0){
+#     my $ufn = "Unknown IDs";
+#     if($filter){
+#       $ufn .= " $filter";
+#     }
+#     my $ufile = file($ufn);
+#     $ufile->touch();
+# 
+#     my $out_unknown = $ufile->openw();
+# 
+#     foreach my $unknownId (@unknownRelIds){
+#       if(!$globalIDs{$unknownId}){
+#         say $out_unknown $unknownId;
+#       }
+#     }
+#   }
 
   # Submit new Orgs to GOKb
 
@@ -948,9 +951,11 @@ sub createJSON {
 
   say "Run finished at $finishedRun";
   say "Runtime: $timeElapsed";
+  
   foreach my $gStatKey (keys %globalStats){
     say "$gStatKey: ".$globalStats{$gStatKey};
   }
+  
 #   say $globalStats{'titlesTotal'}." relevante Titel in $packagesTotal Paketen";
 #   say $globalStats{'numNoUrl'}." Titel ohne relevante URL";
 #   say $globalStats{'duplicateISSNs'}." ZDB-ID-Änderungen ohne ISSN-Anpassung";
@@ -967,6 +972,10 @@ sub createJSON {
 
   if($skippedTitles != 0){
     say "Anzahl wegen Fehler beim Upload übersprungene Titel: $skippedTitles";
+  }
+
+  if($skippedOrgs != 0){
+    say "Anzahl wegen Fehler beim Upload übersprungene Orgs: $skippedOrgs";
   }
 
   say "\n**********************\n";
@@ -1021,7 +1030,7 @@ sub processPackage {
   my $pkgName = $packageInfo{'name'};
 
   $provider =~ s/Anbieter:\s//;
-  $pkgName =~ s/:/-/g;
+  $pkgName =~ s/:/ -/g;
 
   my $pkgYear = strftime '%Y', localtime;
 
@@ -1067,18 +1076,18 @@ sub processPackage {
       normname => "Natliz_SRU"
     );
   }
-  my $pkgNoProv = "$pkgName: $pkgType: $pkgYear";
+  my $pkgNoProv = "$pkgName: $pkgType";
 
   $package{'packageHeader'} = {
-    name => ($provider ?  "$provider: " : "")."$pkgName: $pkgType: $pkgYear",
+    name => ($provider ?  "$provider: " : "")."$pkgName: $pkgType",
     identifiers => [{ type => "isil", value => $packageInfo{'sigel'} }],
     additionalProperties => [],
-    variantNames => [$pkgNoProv],
+    variantNames => [$provider ne "" ? $pkgNoProv : ""],
     scope => "",
     listStatus => "In Progress",
     breakable => "No",
     consistent => "Yes",
-    fixed => "Yes",
+    fixed => "No",
     paymentType => "",
     global => "Consortium",
     listVerifier => "",
@@ -1121,10 +1130,10 @@ sub processPackage {
     while (my $titleRecord = $sruTitles->next){
       $currentTitle++;
       if(pica_value($titleRecord, '006Z0')){
-        print STDOUT "Verarbeite Titel ".($currentTitle+1);
+        print STDOUT "Verarbeite Titel ".($currentTitle);
         print STDOUT " von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '006Z0').")\n";
       }else{
-        print STDOUT "Verarbeite Titel ".($currentTitle+1);
+        print STDOUT "Verarbeite Titel ".($currentTitle);
         print STDOUT " von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '003@0').")\n";
       }
       
@@ -1169,12 +1178,12 @@ sub processPackage {
       or die "Abfrage über ".$attrs{'base'}." fehlgeschlagen!\n";
       
     while (my $titleRecord = $sruTitles->next){
-    
+      $currentTitle++;
       if(pica_value($titleRecord, '006Z0')){
-        print STDOUT "Verarbeite Titel ".($currentTitle+1);
+        print STDOUT "Verarbeite Titel ".($currentTitle);
         print STDOUT " von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '006Z0').")\n";
       }else{
-        print STDOUT "Verarbeite Titel ".($currentTitle+1);
+        print STDOUT "Verarbeite Titel ".($currentTitle);
         print STDOUT " von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '003@0').")\n";
       }
 
@@ -1187,7 +1196,6 @@ sub processPackage {
       
       if(scalar @tipps > 0){
         push @{ $package{'tipps'} }, @tipps;
-        $currentTitle++;
       }
       
       foreach my $statsKey (keys %pkgStats){
@@ -1225,12 +1233,12 @@ sub processPackage {
         or die "Abfrage über ".$attrs{'base'}." fehlgeschlagen!\n";
         
       while (my $titleRecord = $sruBooks->next){
-      
+        $currentTitle++;
         if(pica_value($titleRecord, '006Z0')){
-          print STDOUT "Verarbeite Titel ".($currentTitle+1);
+          print STDOUT "Verarbeite Titel ".($currentTitle);
           print STDOUT " von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '006Z0').")\n";
         }else{
-          print STDOUT "Verarbeite Titel ".($currentTitle+1);
+          print STDOUT "Verarbeite Titel ".($currentTitle);
           print STDOUT " von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '003@0').")\n";
         }
 
@@ -1243,7 +1251,6 @@ sub processPackage {
         
         if(scalar @tipps > 0){
           push @{ $package{'tipps'} }, @tipps;
-          $currentTitle++;
         }
         
         foreach my $statsKey (keys %pkgStats){
@@ -1283,12 +1290,12 @@ sub processPackage {
         or die "Abfrage über ".$attrs{'base'}." fehlgeschlagen!\n";
 
       while (my $titleRecord = $sruTitles->next){
-      
+        $currentTitle++;
         if(pica_value($titleRecord, '006Z0')){
-          print STDOUT "Verarbeite Titel ".($currentTitle+1);
+          print STDOUT "Verarbeite Titel ".($currentTitle);
           print STDOUT " von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '006Z0').")\n";
         }else{
-          print STDOUT "Verarbeite Titel ".($currentTitle+1);
+          print STDOUT "Verarbeite Titel ".($currentTitle);
           print STDOUT " von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '003@0').")\n";
         }
         
@@ -1297,7 +1304,6 @@ sub processPackage {
         
         if(scalar @tipps > 0){
           push @{ $package{'tipps'} }, @tipps;
-          $currentTitle++;
         }
         
         foreach my $statsKey (keys %pkgStats){
@@ -1327,12 +1333,12 @@ sub processPackage {
         or die "Abfrage über ".$attrs{'base'}." fehlgeschlagen!\n";
         
       while (my $titleRecord = $sruTitles->next){
-      
+        $currentTitle++;
         if(pica_value($titleRecord, '006Z0')){
-          print STDOUT "Verarbeite Titel ".($currentTitle+1);
+          print STDOUT "Verarbeite Titel ".($currentTitle);
           print STDOUT " von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '006Z0').")\n";
         }else{
-          print STDOUT "Verarbeite Titel ".($currentTitle+1);
+          print STDOUT "Verarbeite Titel ".($currentTitle);
           print STDOUT " von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '003@0').")\n";
         }
         
@@ -1341,7 +1347,6 @@ sub processPackage {
         
         if(scalar @tipps > 0){
           push @{ $package{'tipps'} }, @tipps;
-          $currentTitle++;
         }
         
         foreach my $statsKey (keys %pkgStats){
@@ -1371,12 +1376,12 @@ sub processPackage {
       say STDOUT "SRU-Antwort für Monographien erhalten!";
         
       while (my $titleRecord = $sruBooks->next){
-
+        $currentTitle++;
         if(pica_value($titleRecord, '006Z0')){
-          print STDOUT "Verarbeite Titel ".($currentTitle+1);
+          print STDOUT "Verarbeite Titel ".($currentTitle);
           print STDOUT " von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '006Z0').")\n";
         }else{
-          print STDOUT "Verarbeite Titel ".($currentTitle+1);
+          print STDOUT "Verarbeite Titel ".($currentTitle);
           print STDOUT " von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '003@0').")\n";
         }
         
@@ -1388,7 +1393,6 @@ sub processPackage {
         
         if(scalar @btipps > 0){
           push @{ $package{'tipps'} }, @btipps;
-          $currentTitle++;
         }
         
         foreach my $statsKey (keys %pkgStats){
@@ -1418,12 +1422,12 @@ sub processPackage {
       say STDOUT "SRU-Antwort für Journals erhalten!";
         
       while (my $titleRecord = $sruJournals->next){
-      
+        $currentTitle++;
         if(pica_value($titleRecord, '006Z0')){
-          print STDOUT "Verarbeite Titel ".($currentTitle+1);
+          print STDOUT "Verarbeite Titel ".($currentTitle);
           print STDOUT " von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '006Z0').")\n";
         }else{
-          print STDOUT "Verarbeite Titel ".($currentTitle+1);
+          print STDOUT "Verarbeite Titel ".($currentTitle);
           print STDOUT " von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '003@0').")\n";
         }
         
@@ -1435,7 +1439,6 @@ sub processPackage {
         
         if(scalar @jtipps > 0){
           push @{ $package{'tipps'} }, @jtipps;
-          $currentTitle++;
         }
         
         foreach my $statsKey (keys %pkgStats){
@@ -1465,12 +1468,12 @@ sub processPackage {
       say STDOUT "SRU-Antwort für Datenbanken erhalten!";
         
       while (my $titleRecord = $sruDatabases->next){
-      
+        $currentTitle++;
         if(pica_value($titleRecord, '006Z0')){
-          print STDOUT "Verarbeite Titel ".($currentTitle+1);
+          print STDOUT "Verarbeite Titel ".($currentTitle);
           print STDOUT " von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '006Z0').")\n";
         }else{
-          print STDOUT "Verarbeite Titel ".($currentTitle+1);
+          print STDOUT "Verarbeite Titel ".($currentTitle);
           print STDOUT " von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '003@0').")\n";
         }
       
@@ -1482,7 +1485,6 @@ sub processPackage {
         
         if(scalar @dtipps > 0){
           push @{ $package{'tipps'} }, @dtipps;
-          $currentTitle++;
         }
         
         foreach my $statsKey (keys %pkgStats){
@@ -2118,7 +2120,7 @@ sub processTitle {
       }
 
       if(!$tempPub){
-        return \@tipps, \%titleStats, \%titleWarnings;
+        next;
       }
 
       ## RAK-Abkürzungen ersetzen/auflösen
@@ -2303,7 +2305,7 @@ sub processTitle {
               'comment' => "GND-Org ist nicht eigenständig."
             };
           }
-          return \@tipps, \%titleStats, \%titleWarnings;
+          next;
         }
 
         if($authType && $authType =~ /Tb/ && $gndID){
@@ -2575,6 +2577,16 @@ sub processTitle {
           parser => 'picaxml',
           _max_results => 1
         );
+      }elsif($endpoint eq "natliz"){
+        my $relQryString = 'pica.zdb='.$relatedID;
+
+        %relAttrs = (
+          base => 'http://sru.gbv.de/natlizzss',
+          query => $relQryString,
+          recordSchema => 'picaxml',
+          parser => 'picaxml',
+          _max_results => 1
+        );
       }
       my $relRecord;
 
@@ -2678,6 +2690,26 @@ sub processTitle {
 
                   if($formatedRelISSN ne ""){
                     push @{ $relObj{'identifiers'} }, { 'type' => "eissn", 'value' => $formatedRelISSN };
+                  }
+                }
+                $rSubfPos++;
+              }
+            }
+          }
+
+          if(pica_value($relRecord, '005P0')){
+            my @relatedISSNs = @{ pica_fields($relRecord, '005P')};
+
+            foreach my $relatedISSN (@relatedISSNs){
+              my @rISSN = @{ $relatedISSN };
+              my $rSubfPos = 0;
+
+              foreach my $subField (@rISSN){
+                if($subField eq '0'){
+                  my $formatedRelISSN = formatISSN($rISSN[$rSubfPos+1]);
+
+                  if($formatedRelISSN ne ""){
+                    push @{ $relObj{'identifiers'} }, { 'type' => "issn", 'value' => $formatedRelISSN };
                   }
                 }
                 $rSubfPos++;
@@ -2934,7 +2966,7 @@ sub processTitle {
     }else{
       $titleStats{'numNoUrl'} = 1;
     }
-    say "No valid URL found, adding placeholder!";
+    say "No valid URL found, adding placeholder ($id)!";
 
     my $pUrl = $pkgInfo{'url'};
     my $pName = $pkgInfo{'nominalPlatform'};
@@ -3000,6 +3032,7 @@ sub processTitle {
         'title' => $titleInfo{'name'},
         'connected' => \@relatedPrev
     };
+    push @allTitles , \%titleInfo;
   }else{
     say "ID ".$id." ist bereits in der Titelliste vorhanden!";
 
@@ -3009,7 +3042,6 @@ sub processTitle {
       $titleStats{'duplicateZDBids'} = 1;
     }
   }
-  push @allTitles , \%titleInfo;
   return \@tipps, \%titleStats, \%titleWarnings;
   
 } ## End TitleInstance
@@ -3168,9 +3200,11 @@ sub processTipp {
 
   my $url = URI->new( $sourceURL );
   my $host;
+  my $hostUrl = "";
 
   if($url->has_recognized_scheme){
     $host = $url->authority;
+    my $scheme = $url->scheme;
 
     if(!$host){
       if($tippStats{'brokenURL'}){
@@ -3192,6 +3226,11 @@ sub processTipp {
       say "Could not extract host of URL $url";
       $tipp{'status'} = "skipped";
       return (\%tipp, \%tippWarnings, \%tippStats);
+    }else{
+      if($scheme){
+        $hostUrl = "$scheme://";
+      }
+      $hostUrl .= $host;
     }
   }else{
     say "Looks like a wrong URL!";
@@ -3220,7 +3259,7 @@ sub processTipp {
 
   $tipp{'platform'} = {
     'name' => $host,
-    'primaryUrl' => $host
+    'primaryUrl' => $hostUrl
   };
 
   # -------------------- Coverage --------------------
@@ -3367,6 +3406,8 @@ sub postData {
 
 sub formatISSN {
   my ($issn) = shift;
+
+  $issn =~ s/^\s+|\s+$//g;
 
   if($issn && $issn =~ /^[0-9xX]{4}-?[0-9xX]{4}$/){
     if(index($issn, '-') eq '-1'){
