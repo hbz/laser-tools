@@ -453,6 +453,7 @@ sub getSeals {
   my $rv = $sth->execute() or die $DBI::errstr;
   my $JSON = JSON->new->utf8->canonical;
   my %alljson;
+  my %knownIsils;
 
   if(-e $knownSeals){
     copy($knownSeals, $knownSeals."_last.json");
@@ -470,7 +471,7 @@ sub getSeals {
   while(my @row = $sth->fetchrow_array()) {
     my ($zuid, $pkgSigel, $licence_type) = @row;
 
-    if($pkgSigel && $pkgSigel =~ /^ZDB-[0-9]+-[a-zA-Z]+$/ && $pkgSigel ne 'ZDB-1-TEST'){
+    if($pkgSigel && $pkgSigel =~ /^ZDB-[0-9]+-[a-zA-Z]+[0-9]*$/ && $pkgSigel ne 'ZDB-1-TEST'){
       my %pkgInfos = getZdbName($pkgSigel);
       my $lType;
       if($licence_type eq 'NLLicenceModelStandard'){
@@ -554,24 +555,30 @@ sub getSeals {
             }
 
             if($hasError == 0){
-              my %bibAttrs = (
-                  base => 'http://sru.gbv.de/isil',
-                  query => 'pica.isi='.$tempISIL,
-                  recordSchema => 'picaxml',
-                  parser => 'picaxml'
-              );
-              say STDOUT "Suche nach ISIL: $tempISIL!";
-              my $orgImporter = Catmandu::Importer::SRU->new(%bibAttrs)
-                or die "Abfrage über ".$bibAttrs{'base'}." fehlgeschlagen!\n";
+              if(!$knownIsils{$tempISIL}){
+                my %bibAttrs = (
+                    base => 'http://sru.gbv.de/isil',
+                    query => 'pica.isi='.$tempISIL,
+                    recordSchema => 'picaxml',
+                    parser => 'picaxml'
+                );
+                say STDOUT "Suche nach ISIL: $tempISIL!";
+                my $orgImporter = Catmandu::Importer::SRU->new(%bibAttrs)
+                  or die "Abfrage über ".$bibAttrs{'base'}." fehlgeschlagen!\n";
 
-              my $sruOrg = $orgImporter->first();
+                my $sruOrg = $orgImporter->first();
 
-              if($sruOrg){
-                $pkg{'orgStats'}{'numValidSig'}++;
+                if($sruOrg){
+                  $pkg{'orgStats'}{'numValidSig'}++;
+                  $isil = $tempISIL;
+                  $knownIsils{$tempISIL} = 1;
+                }else{
+                  $pkg{'orgStats'}{'numWrongSig'}++;
+                  say "Suche nach $tempISIL erfolglos!";
+                  $knownIsils{$tempISIL} = 0;
+                }
+              }elsif($knownIsils{$tempISIL} == 1){
                 $isil = $tempISIL;
-              }else{
-                $pkg{'orgStats'}{'numWrongSig'}++;
-                say "Suche nach $tempISIL erfolglos!";
               }
             }else{
               $pkg{'orgStats'}{'numWrongSig'}++;
@@ -777,7 +784,7 @@ sub createJSON {
       $noZdbOrgs = 1;
     }
     
-    if($requestedType eq "journal" && ( $pkgScope !~ /E-Journals/ || $noZdbOrgs == 1 )){
+    if($requestedType eq "journal" && $pkgScope !~ /E-Journals/){
       say "Keine verknüpften Institutionen in der ZBD bzw. nicht als E-Journal-Paket markiert. Überspringe Paket.";
       next;
     }
@@ -785,7 +792,14 @@ sub createJSON {
     my %currentPackage = %{$knownSelection{$sigel}};
     
     my ($package, $pkgStats, $pkgWarn) = processPackage(%currentPackage);
+
     my %package = %{$package};
+
+    if (scalar @{$package{'tipps'}} == 0){
+      say "Paket $sigel hat keine TIPPs und wird nicht angelegt!";
+      next;
+    }
+
     my %pkgStats = %{$pkgStats};
     my %pkgWarn = %{$pkgWarn};
     
@@ -928,7 +942,9 @@ sub createJSON {
   if($postData == 1){
     sleep 3;
 
-    say "Submitting ".$globalStats{'titlesTotal'}." titles to GOKb (".$gokbCreds{'base'}.")";
+    my $sumTitles = $globalStats{'titlesTotal'} ? $globalStats{'titlesTotal'} : 0;
+
+    say "Submitting $sumTitles titles to GOKb (".$gokbCreds{'base'}.")";
 
     foreach my $title (@allTitles){
       my %curTitle = %{ $title };
@@ -1123,7 +1139,7 @@ sub processPackage {
       parser => 'picaxml',
       _max_results => 5
     );
-    
+
     my $sruTitles = Catmandu::Importer::SRU->new(%attrs)
       or die "Abfrage über ".$attrs{'base'}." fehlgeschlagen!\n";
     
@@ -1573,7 +1589,13 @@ sub processTitle {
 
   ## DOI
 
-  my $doi = pica_value($titleRecord, '004V0');
+  my $doi;
+
+  if(($endpoint eq "gvk" && $pkgType eq "NL") || $endpoint eq "natliz"){
+    $doi = pica_value($titleRecord, '004V0');
+  }else{
+    $doi = pica_value($titleRecord, '004P0');
+  }
 
   if($doi){
     push @{ $titleInfo{'identifiers'} } , {
@@ -2673,8 +2695,12 @@ sub processTitle {
 
           push @{ $relObj{'identifiers'} }, { 'type' => "zdb", 'value' => $relatedID };
 
-          if(pica_value($relRecord, '004V0')){
-            push @{ $relObj{'identifiers'} }, { 'type' => "doi", 'value' => pica_value($relRecord, '004V0') };
+          if(($endpoint eq "gvk" && $pkgType eq "NL") || $endpoint eq "natliz"){
+            if(pica_value($relRecord, '004V0')){
+              push @{ $relObj{'identifiers'} }, { 'type' => "doi", 'value' => pica_value($relRecord, '004V0') };
+            }
+          }elsif(pica_value($relRecord, '004P0')){
+            push @{ $relObj{'identifiers'} }, { 'type' => "doi", 'value' => pica_value($relRecord, '004P0') };
           }
 
           if(pica_value($relRecord, '005A0')){
