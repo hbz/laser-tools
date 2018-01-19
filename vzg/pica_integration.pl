@@ -85,7 +85,7 @@ my $requestedType = "journal";
 
 ## Name der JSON-Datei mit Paketinformationen
 
-my $knownSeals = 'CMS_Pakete.json';
+my $knownSeals = 'NL_Pakete.json';
 
 ## Standard-URL der Ziel-GOKb
 
@@ -457,8 +457,7 @@ sub getSeals {
     seal as sigel,
     meta_type as type
     FROM lmodels
-    WHERE \( meta_type = 'NLLicenceModelStandard'
-    OR meta_type = 'NLLicenceModelOptIn' \)
+    WHERE \( meta_type = 'NLLicenceModelStandard' \)
     AND wf_state='published';
   );
 
@@ -900,10 +899,16 @@ sub createJSON {
 
       if($postResult != 0){
         say "Could not Upload Package $sigel! Errorcode $postResult";
-        say "Giving it one more try!";
-        sleep 10;
-        if(postData('crossReferencePackage', \%package) != 0){
-          say "Second try failed as well. Adding to report..";
+        
+        if ($postResult != 403) {
+          say "Giving it one more try!";
+          sleep 10;
+          
+          if(postData('crossReferencePackage', \%package) != 0){
+            say "Second try failed as well. Adding to report..";
+            $skippedPackages .= $sigel." ";
+          }
+        } else {
           $skippedPackages .= $sigel." ";
         }
       }
@@ -1168,7 +1173,7 @@ sub processPackage {
     nominalProvider => $provider,
     listVerifiedDate => $listVerDate,
     source => \%pkgSource,
-    curatoryGroups => ["LAS:eR", "VZG"],
+    curatoryGroups => ["LAS:eR", "VZG", "ZDB"],
   };
 
   $package{'tipps'} = [];
@@ -2157,7 +2162,7 @@ sub processTitle {
 
     $titleInfo{'publishedTo'} = convertToTimeStamp($dts[0][1], 1);
   }else{
-    $titleInfo{'dateFirstOnline'} = convertToTimeStamp($dts[0][0], 0)
+    $titleInfo{'dateFirstOnline'} = convertToTimeStamp($dts[0][0], 0);
   }
 
   # -------------------- Publisher --------------------
@@ -2242,6 +2247,10 @@ sub processTitle {
 
           if($tempStart && looks_like_number($tempStart)) {
             $pubStart = convertToTimeStamp($tempStart, 0);
+          }elsif($titleInfo{'publishedFrom'}){
+            $pubStart = $titleInfo{'publishedFrom'}
+          }elsif($titleInfo{'dateFirstOnline'}) {
+            $pubStart = $titleInfo{'dateFirstOnline'}
           }
 
           my ($tempEnd) =
@@ -2446,7 +2455,7 @@ sub processTitle {
 
         if($authType && $authType =~ /Tb/ && $gndID){
 
-          my $orgURI = "http://d-nb.info/".$gndID;
+          my $orgURI = "http://d-nb.info/gnd/".$gndID;
 
           my %orgObj = (
             'name' => $pubName,
@@ -3082,17 +3091,22 @@ sub processTitle {
   }
 
   my $numSources = scalar @onlineSources;
+  my @skippedTipps = ();
 
   foreach my $eSource (@onlineSources){
 
-    my ($tipp, $tippWarnings, $tippStats) = processTipp($eSource, $pkgType, $gokbType, %titleInfo);
+    my ($tipp, $tippWarnings, $tippStats, $tippComment) = processTipp($eSource, $pkgType, $gokbType, %titleInfo);
     
     my %tipp = %{$tipp};
     my %tippWarnings = %{$tippWarnings};
     my %tippStats = %{$tippStats};
     
-    if($tipp{'status'} ne "skipped"){
+    if(!$tipp{'action'}){
       push @tipps, \%tipp;
+    }elsif ($tipp{'action'} eq "skipped") {
+      delete $tipp{'action'};
+      $tipp{'comment'} = $tippComment;
+      push @skippedTipps, \%tipp;
     }
     
     if($titleWarnings{'id'} ne "" ){
@@ -3115,42 +3129,65 @@ sub processTitle {
   # -------------------- NO viable URL found ... --------------------
 
   if(scalar @tipps == 0){
-    if($titleStats{'numNoUrl'}){
-      $titleStats{'numNoUrl'}++;
+    # Look in skipped TIPPs
+
+    if(scalar @skippedTipps > 0){
+      foreach my $bkpTipp (@skippedTipps) {
+        my %skTipp = %{$bkpTipp};
+        if ( scalar @tipps == 0 && ($skTipp{'comment'} eq "LF" || $skTipp{'comment'} eq "KF" || $skTipp{'comment'} eq "KW") ) {
+          delete $skTipp{'comment'};
+          push @tipps, \%skTipp;
+
+          if($titleStats{'numUsedOA'}){
+            $titleStats{'numUsedOA'}++;
+          }else{
+            $titleStats{'numUsedOA'} = 1;
+          }
+        }
+      }
     }else{
-      $titleStats{'numNoUrl'} = 1;
-    }
-    say "No valid URL found, adding placeholder ($id)!";
 
-    my $pName = $pkgInfo{'nominalPlatform'};
-    my $provider = $pkgInfo{'nominalProvider'};
-    
-    push @{ $titleWarnings{'all'} }, {
-        '009P0'=> "ZDB-URLs != GVK-URLs?"
-    };
+      # Add placeholder TIPP
 
-    push @{ $titleWarnings{'gvk'} }, {
-        '009P0'=> "ZDB-URLs != GVK-URLs?"
-    };
-    push @{ $titleWarnings{'zdb'} }, {
-        '009P0'=> "ZDB-URLs != GVK-URLs?"
-    };
-    
-    if($provider && $pName){
-      push @tipps, {
-        'medium' => "Electronic",
-        'platform' => {
-          'name' => $pName ? $pName : ""
-        },
-        'status' => "Current",
-        'title' => {
-          'identifiers' => \@{$titleInfo{'identifiers'}},
-          'name' => $titleInfo{'name'},
-          'type' => "Serial"
+      if($titleStats{'numNoUrl'}){
+        $titleStats{'numNoUrl'}++;
+      }else{
+        $titleStats{'numNoUrl'} = 1;
+      }
+      say "No valid URL found, adding placeholder ($id)!";
+
+      my $packagePlatformName = $pkgInfo{'nominalPlatform'};
+      my $provider = $pkgInfo{'nominalProvider'};
+
+      push @{ $titleWarnings{'all'} }, {
+          '009P0'=> "ZDB-URLs != GVK-URLs?"
+      };
+
+      push @{ $titleWarnings{'gvk'} }, {
+          '009P0'=> "ZDB-URLs != GVK-URLs?"
+      };
+      push @{ $titleWarnings{'zdb'} }, {
+          '009P0'=> "ZDB-URLs != GVK-URLs?"
+      };
+
+      if($packagePlatformName){
+        push @tipps, {
+          'medium' => "Electronic",
+          'platform' => {
+            'name' => $packagePlatformName ? $packagePlatformName : ""
+          },
+          'status' => "Current",
+          'title' => {
+            'identifiers' => \@{$titleInfo{'identifiers'}},
+            'name' => $titleInfo{'name'},
+            'type' => "Serial"
+          }
         }
       }
     }
   }
+
+  # -------------------- Warnings --------------------
 
   if(scalar @{$titleWarnings{'all'}} > 0){
     
@@ -3268,7 +3305,7 @@ sub processTipp {
 
   if(!$sourceURL || length $sourceURL > 255 || $sourceURL eq ""){
     say "Skipping TIPP with overlong URL!";
-    $tipp{'status'} = "skipped";
+    $tipp{'action'} = "error";
     return (\%tipp, \%tippWarnings, \%tippStats);
   }else{
     say STDOUT "Considering URL: $sourceURL";
@@ -3319,8 +3356,7 @@ sub processTipp {
       }
       
       say STDOUT "Skipping NL-TIPP.. wrong Public Comment: $publicComments, (internal=$internalComments)";
-      $tipp{'status'} = "skipped";
-      return (\%tipp, \%tippWarnings, \%tippStats);
+      $tipp{'action'} = "skipped";
     }else{
       if($tippStats{'nlURLs'}){
         $tippStats{'nlURLs'}++;
@@ -3334,8 +3370,7 @@ sub processTipp {
 
     if($internalCommentIsValid != 1){
       say STDOUT "Skipping NL-TIPP.. wrong Internal Comment: $internalComments";
-      $tipp{'status'} = "skipped";
-      return (\%tipp, \%tippWarnings, \%tippStats);
+      $tipp{'action'} = "skipped";
     }
   }
   else {
@@ -3348,8 +3383,7 @@ sub processTipp {
       }
     }else{
       say STDOUT "Skipping TIPP .. wrong Type or source: $internalComments, $publicComments";
-      $tipp{'status'} = "skipped";
-      return (\%tipp, \%tippWarnings, \%tippStats);
+      $tipp{'action'} = "skipped";
     }
   }
 
@@ -3387,8 +3421,8 @@ sub processTipp {
       };
       
       say "Could not extract host of URL $url";
-      $tipp{'status'} = "skipped";
-      return (\%tipp, \%tippWarnings, \%tippStats);
+      $tipp{'action'} = "error";
+      return (\%tipp, \%tippWarnings, \%tippStats, $publicComments);
     }else{
       if($scheme){
         $hostUrl = "$scheme://";
@@ -3415,9 +3449,9 @@ sub processTipp {
     };
     
     say "Could not extract scheme of URL $url";
-    $tipp{'status'} = "skipped";
+    $tipp{'action'} = "error";
   
-    return (\%tipp, \%tippWarnings, \%tippStats);
+    return (\%tipp, \%tippWarnings, \%tippStats, $publicComments);
   }
 
   $tipp{'platform'} = {
@@ -3519,7 +3553,7 @@ sub processTipp {
     'type' => $gokbType
   };
 
-  return (\%tipp, \%tippWarnings, \%tippStats);
+  return (\%tipp, \%tippWarnings, \%tippStats, $publicComments);
 }
 
 # Submit package/title JSON to GOKb-API
@@ -3548,6 +3582,7 @@ sub postData {
     if($resp->is_success){
       if($endPointType eq 'crossReferencePackage'){
         say "Commit of package successful.";
+        say "HTTP POST message: ", $resp->message;
       }
 
       return 0;
@@ -3555,7 +3590,23 @@ sub postData {
     }else{
       say "HTTP POST error code: ", $resp->code;
       say "HTTP POST error message: ", $resp->message;
-
+      
+      my %resp_content;
+      
+      eval {
+      
+        %resp_content = %{decode_json($resp->content)};
+        
+        foreach my $eMessage (@{$resp_content{'errors'}}) {
+          my %eMessage = %{$eMessage};
+          say "Cause: ", $eMessage{'message'};
+        }
+        1;
+        
+      } or do {
+        say "Could not determine cause of error!";
+      };
+      
       return $resp->code;
     }
   }else{
@@ -3616,35 +3667,63 @@ sub matchExistingOrgs {
   my $publisherMatch;
 
   if(!$matchOrgsByFile){
-    my $ua = LWP::UserAgent->new;
-    my %params = ( 'type' => "Org", 'term' => $pubName, 'match' => "variantNames.variantName", 'filter' => "status.value\%3DDeleted" );
-    my $url = $gokbCreds{'base'}."api/lookup";
-    my $uri = URI->new($url);
+    if ($gokbCreds{'username'} && $gokbCreds{'password'}) {
+      my $ua = LWP::UserAgent->new;
+      my %params = ( 'componentType' => "Org", 'label' => $pubName );
+      my $url = $gokbCreds{'base'}."api/find?";
+      my $uri = URI->new($url);
 
-    $uri->query_form(%params);
+      $uri->query_form(%params);
 
-    my $req = HTTP::Request->new(GET => $uri);
+      my $req = HTTP::Request->new(GET => $uri);
 
-    $req->authorization_basic($gokbCreds{'username'}, $gokbCreds{'password'});
-    $req->header('GOKb-version' => '3.0.0');
+      $req->authorization_basic($gokbCreds{'username'}, $gokbCreds{'password'});
 
-    my $resp = $ua->request($req);
+      my $resp = $ua->request($req);
 
-    if($resp->is_success){
+      if($resp->is_success){
+        my $orgResp = decode_json($resp->content);
+        my %orgResp = %{$orgResp};
+        my @res = @{$orgResp{'records'}};
+        
+        foreach my $record (@res) {
+          my %record = %{ $record };
+          my $gokbNormOrg = normalizeString($record{'name'});
+          if ($gokbNormOrg eq $normPubName) {
+            $publisherMatch = $record{'name'};
+            last;
+          }else{
+            foreach my $altname (@{$record{'altNames'}}){
+              my $gokbNormAltName = normalizeString($altname);
+              if ($gokbNormAltName eq $normPubName) {
+                $publisherMatch = $record{'name'};
+                last;
+              }
+            }
+            if($publisherMatch){
+              last;
+            }
+          }
+        }
+        if($publisherMatch) {
+          say "Matched GOKb Org $publisherMatch for given Org: $pubName";
+        }
+        
 
-      my %orgResp = %{ decode_json($resp->content) };
-      my @res = @{$orgResp{'result'}};
+#         if(scalar @res == 1){
+#           $publisherMatch = $res[0]{'label'};
+#           say STDOUT "Matched Org $publisherMatch for given Org $pubName!";
+#         }
 
-      if(scalar @res == 1){
-        $publisherMatch = $res[0]{'label'};
-        say STDOUT "Matched Org $publisherMatch for given Org $pubName!";
+      }else{
+        say "Could not look up Org name in GOKb..";
+        say "HTTP GET error code: ", $resp->code;
+        say "HTTP GET error message: ", $resp->message;
+        say "Using ONLD.jsonld from now on..";
+        $matchOrgsByFile = 1;
       }
-
     }else{
-      say "Could not look up Org name in GOKb..";
-      say "HTTP POST error code: ", $resp->code;
-      say "HTTP POST error message: ", $resp->message;
-      say "Using ONLD.jsonld from now on..";
+      say "Could not find any GOKb credentials.. matching by file.";
       $matchOrgsByFile = 1;
     }
   }
