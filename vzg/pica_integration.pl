@@ -54,6 +54,7 @@ use LWP::UserAgent;
 use HTTP::Request;
 use HTTP::Request::Common;
 use Term::ReadKey;
+use WWW::Mechanize;
 
 use Catmandu -all;
 use Catmandu::PICA;
@@ -675,6 +676,7 @@ my @unknownRelIds;
 my %orgsToAdd;
 my %allISSN;
 my %known;
+my %checkedUrls;
 
 sub createJSON {
 
@@ -1108,8 +1110,9 @@ sub processPackage {
     $userListVer = $gokbCreds{'username'};
     $listVerDate = convertToTimeStamp(strftime('%Y-%m-%d', localtime));
   }
+  my $gokbProvider = matchExistingOrgs($packageInfo{'provider'});
 
-  my $provider = $packageInfo{'provider'};
+  my $provider = $gokbProvider ? $gokbProvider : $packageInfo{'provider'};
   my $pkgName = $packageInfo{'name'};
 
   $provider =~ s/Anbieter:\s//;
@@ -1117,15 +1120,49 @@ sub processPackage {
 
   my $pkgYear = strftime '%Y', localtime;
 
-  my $pkgPlatform = "";
+  my %pkgPlatform;
 
-  if ( $packageInfo{'platform'} ) {
-    $pkgPlatform = $packageInfo{'platform'};
-  } elsif ( $packageInfo{'url'} ) {
-    my $pkgUrl = URI->new($packageInfo{'url'});
-    my $pkgScheme = $pkgUrl->scheme;
-    my $pkgHost = $pkgUrl->host;
-    $pkgPlatform = "$pkgScheme://$pkgHost";
+  if ( $packageInfo{'url'} ) {
+
+    my $checkedUrl = checkUrl($packageInfo{'url'});
+
+    if (!$checkedUrl) {
+      my @pkgInfoWarn;
+
+      my %pWarn = (
+        'value' => $packageInfo{'url'},
+        'status' => 'invalid',
+        'message' => 'Die im Sigelverzeichnis für dieses Paket angegebene URL ist nicht erreichbar.'
+      );
+
+      push @pkgInfoWarn, %pWarn;
+      $packageWarnings{'packageinfo'} = @pkgInfoWarn;
+    }elsif ($checkedUrl ne $packageInfo{'url'}) {
+      my @pkgInfoWarn;
+
+      my %pWarn = (
+        'value' => $packageInfo{'url'},
+        'status' => 'redirected',
+        'message' => 'Die im Sigelverzeichnis für dieses Paket angegebene URL ist nicht mehr aktuell.'
+      );
+
+      push @pkgInfoWarn, %pWarn;
+      $packageWarnings{'packageinfo'} = @pkgInfoWarn;
+    }
+
+    $pkgPlatform{'primaryUrl'} = $checkedUrl;
+
+    if($packageInfo{'platform'}) {
+      $pkgPlatform{'name'} = $packageInfo{'platform'};
+    }else{
+      my $pkgUrl = URI->new($packageInfo{'url'});
+      my $pkgScheme = $pkgUrl->scheme;
+      my $pkgHost = $pkgUrl->host;
+
+      my $urlName = substr($pkgHost, 0, 3) eq 'www' ? substr($pkgHost, 4) : $pkgHost;
+
+      $pkgPlatform{'name'} = $urlName;
+    }
   }
 
   my %pkgSource;
@@ -1169,7 +1206,7 @@ sub processPackage {
     global => "Consortium",
     listVerifier => "",
     userListVerifier => $userListVer,
-    nominalPlatform => $pkgPlatform,
+    nominalPlatform => \%pkgPlatform,
     nominalProvider => $provider,
     listVerifiedDate => $listVerDate,
     source => \%pkgSource,
@@ -2226,6 +2263,7 @@ sub processTitle {
           }
           $preCorrectedPub = $pub[$subfPos+1];
           $tempPub = $pub[$subfPos+1];
+          say STDOUT "Verlagsangabe: $tempPub";
         }
         if($subField eq 'h'){
 
@@ -2388,83 +2426,81 @@ sub processTitle {
     }
   }
 
-  ## Im Autor- bzw. Körperschaftsfeld nach Ersatz suchen
+  if(scalar @gndPubs > 0){
+    foreach my $pub (@gndPubs) {
+      my @pub = @{ $pub };
+      my $tempPub;
+      my $pubStart;
+      my $pubEnd;
+      my $subfPos = 0;
+      my $preCorrectedPub = "";
+      my $pubName;
+      my $isParent = 0;
+      my $branch;
+      my $ncsuPub;
+      my $authType;
+      my $gndID;
 
-  if(scalar @{ $titleInfo{'publisher_history'} } == 0) {
+      foreach my $subField (@pub){
+        if($subField eq 'a'){
+          $pubName = $pub[$subfPos+1];
+          $pubName =~ s/\s@//g;
+          $ncsuPub = matchExistingOrgs($pubName);
 
-    if(scalar @gndPubs > 0){
-      foreach my $pub (@gndPubs) {
-        my @pub = @{ $pub };
-        my $tempPub;
-        my $pubStart;
-        my $pubEnd;
-        my $subfPos = 0;
-        my $preCorrectedPub = "";
-        my $pubName;
-        my $isParent = 0;
-        my $branch;
-        my $ncsuPub;
-        my $authType;
-        my $gndID;
-
-        foreach my $subField (@pub){
-          if($subField eq 'a'){
-            $pubName = $pub[$subfPos+1];
-            $pubName =~ s/\s@//g;
-            $ncsuPub = matchExistingOrgs($pubName);
-
-            if(!$ncsuPub){
-              if($endpoint eq 'zdb'){
-                push @{ $titleWarnings{'all'} }, {
-                  '029Aa' => $pubName,
-                  'comment' => "GND-Org ist nicht in der GOKb vorhanden."
-                };
-              }else{
-                push @{ $titleWarnings{'all'} }, {
-                  '029Ga' => $pubName,
-                  'comment' => "GND-Org ist nicht in der GOKb vorhanden."
-                };
-              }
+          if(!$ncsuPub){
+            if($endpoint eq 'zdb'){
+              push @{ $titleWarnings{'all'} }, {
+                '029Aa' => $pubName,
+                'comment' => "GND-Org ist nicht in der GOKb vorhanden."
+              };
+            }else{
+              push @{ $titleWarnings{'all'} }, {
+                '029Ga' => $pubName,
+                'comment' => "GND-Org ist nicht in der GOKb vorhanden."
+              };
             }
-          }elsif($subField eq 'M' || $subField eq '7'){
-            $authType = substr($pub[$subfPos+1],0,2);
-          }elsif($subField eq '0'){
-            $gndID = $pub[$subfPos+1];
-          }elsif($subField eq 'b'){
-            $branch = $pub[$subfPos+1];
-            $isParent = 1;
           }
-          $subfPos++;
+        }elsif($subField eq 'M' || $subField eq '7'){
+          $authType = substr($pub[$subfPos+1],0,2);
+        }elsif($subField eq '0'){
+          $gndID = $pub[$subfPos+1];
+        }elsif($subField eq 'b'){
+          $branch = $pub[$subfPos+1];
+          $isParent = 1;
         }
-        if($isParent == 1){
-          say "$id - Parent: $pubName, Child: $branch";
+        $subfPos++;
+      }
+      if($isParent == 1){
+        say "$id - Parent: $pubName, Child: $branch";
 
-          if($endpoint eq 'zdb'){
-            push @{ $titleWarnings{'all'} }, {
-              '029A' => \@pub,
-              'comment' => "GND-Org ist nicht eigenständig."
-            };
-          }else{
-            push @{ $titleWarnings{'all'} }, {
-              '029G' => \@pub,
-              'comment' => "GND-Org ist nicht eigenständig."
-            };
-          }
-          next;
+        if($endpoint eq 'zdb'){
+          push @{ $titleWarnings{'all'} }, {
+            '029A' => \@pub,
+            'comment' => "GND-Org ist nicht eigenständig."
+          };
+        }else{
+          push @{ $titleWarnings{'all'} }, {
+            '029G' => \@pub,
+            'comment' => "GND-Org ist nicht eigenständig."
+          };
+        }
+        next;
+      }
+
+      if($authType && $authType =~ /Tb/ && $gndID){
+
+        my $orgURI = "http://d-nb.info/gnd/".$gndID;
+
+        my %orgObj = (
+          'name' => $pubName,
+          'identifiers' => [{'type' => "global", 'value' => $orgURI}]
+        );
+
+        if(!$orgsToAdd{$pubName}){
+          $orgsToAdd{$pubName} = \%orgObj;
         }
 
-        if($authType && $authType =~ /Tb/ && $gndID){
-
-          my $orgURI = "http://d-nb.info/gnd/".$gndID;
-
-          my %orgObj = (
-            'name' => $pubName,
-            'identifiers' => [{'type' => "global", 'value' => $orgURI}]
-          );
-
-          if(!$orgsToAdd{$pubName}){
-            $orgsToAdd{$pubName} = \%orgObj;
-          }
+        if(scalar @{ $titleInfo{'publisher_history'} } == 0) {
 
           push @{ $titleInfo{'publisher_history'}} , {
               'name' => $pubName,
@@ -2472,7 +2508,7 @@ sub processTitle {
               'endDate' => "",
               'status' => "Active"
           };
-          
+
           if($titleStats{'pubFromGnd'}){
             $titleStats{'pubFromGnd'}++;
           }else{
@@ -2480,62 +2516,66 @@ sub processTitle {
           }
         }
       }
-    }else{
-      if($titleCorpField){
-        my $ncsuAuthor = matchExistingOrgs($titleCorpField);
+    }
+  }
 
-        if($ncsuAuthor){
-          push @{ $titleInfo{'publisher_history'}} , {
-              'name' => $ncsuAuthor,
-              'startDate' => convertToTimeStamp($dts[0][0], 0),
-              'endDate' => convertToTimeStamp($dts[0][1], 1),
-              'status' => ""
-          };
-          
-          if($titleStats{'pubFromCorp'}){
-            $titleStats{'pubFromCorp'}++;
-          }else{
-            $titleStats{'pubFromCorp'} = 1;
-          }
-        }
-        # print "Used author $authorField as publisher.\n";
-      }elsif($authorField){
-        my $ncsuAuthor = matchExistingOrgs($authorField);
+  ## Im Autor- bzw. Körperschaftsfeld nach Ersatz suchen
 
-        if($ncsuAuthor){
-          push @{ $titleInfo{'publisher_history'}} , {
-              'name' => $ncsuAuthor,
-              'startDate' => convertToTimeStamp($dts[0][0], 0),
-              'endDate' => convertToTimeStamp($dts[0][1], 1),
-              'status' => ""
-          };
-          
-          if($titleStats{'pubFromAuthor'}){
-            $titleStats{'pubFromAuthor'}++;
-          }else{
-            $titleStats{'pubFromAuthor'} = 1;
-          }
-        }
-        # print "Used author $authorField as publisher.\n";
-      }elsif($corpField){
-        my $ncsuCorp = matchExistingOrgs($corpField);
+  if(scalar @{ $titleInfo{'publisher_history'} } == 0) {
+    if($titleCorpField){
+      my $ncsuAuthor = matchExistingOrgs($titleCorpField);
 
-        if($ncsuCorp){
-          push @{ $titleInfo{'publisher_history'}} , {
-              'name' => $ncsuCorp,
-              'startDate' => convertToTimeStamp($dts[0][0], 0),
-              'endDate' => convertToTimeStamp($dts[0][1], 1),
-              'status' => ""
-          };
-          if($titleStats{'pubFromCorp'}){
-            $titleStats{'pubFromCorp'}++;
-          }else{
-            $titleStats{'pubFromCorp'} = 1;
-          }
+      if($ncsuAuthor){
+        push @{ $titleInfo{'publisher_history'}} , {
+            'name' => $ncsuAuthor,
+            'startDate' => convertToTimeStamp($dts[0][0], 0),
+            'endDate' => convertToTimeStamp($dts[0][1], 1),
+            'status' => ""
+        };
+
+        if($titleStats{'pubFromCorp'}){
+          $titleStats{'pubFromCorp'}++;
+        }else{
+          $titleStats{'pubFromCorp'} = 1;
         }
       }
-      # print "Used corp $corpField as publisher.\n";
+      # print "Used author $authorField as publisher.\n";
+    }elsif($authorField){
+      my $ncsuAuthor = matchExistingOrgs($authorField);
+
+      if($ncsuAuthor){
+        push @{ $titleInfo{'publisher_history'}} , {
+            'name' => $ncsuAuthor,
+            'startDate' => convertToTimeStamp($dts[0][0], 0),
+            'endDate' => convertToTimeStamp($dts[0][1], 1),
+            'status' => ""
+        };
+
+        if($titleStats{'pubFromAuthor'}){
+          $titleStats{'pubFromAuthor'}++;
+        }else{
+          $titleStats{'pubFromAuthor'} = 1;
+        }
+      }
+      # print "Used author $authorField as publisher.\n";
+    }elsif($corpField){
+      my $ncsuCorp = matchExistingOrgs($corpField);
+
+      if($ncsuCorp){
+        push @{ $titleInfo{'publisher_history'}} , {
+            'name' => $ncsuCorp,
+            'startDate' => convertToTimeStamp($dts[0][0], 0),
+            'endDate' => convertToTimeStamp($dts[0][1], 1),
+            'status' => ""
+        };
+        if($titleStats{'pubFromCorp'}){
+          $titleStats{'pubFromCorp'}++;
+        }else{
+          $titleStats{'pubFromCorp'} = 1;
+        }
+      }
     }
+      # print "Used corp $corpField as publisher.\n";
   }
 
   # -------------------- Related titles --------------------
@@ -2640,7 +2680,7 @@ sub processTitle {
           $relationType = $relTitle[$subfPos+1];
         }
 
-        if($subField eq '0'){
+        if($subField eq '0' && $relTitle[$subfPos-1] ne 'gnd'){
           my $oID = formatZdbId($relTitle[$subfPos+1]);
 
           if($oID){
@@ -3132,8 +3172,9 @@ sub processTitle {
     # Look in skipped TIPPs
 
     if(scalar @skippedTipps > 0){
-      foreach my $bkpTipp (@skippedTipps) {
-        my %skTipp = %{$bkpTipp};
+      foreach my $skTipp (@skippedTipps) {
+        my %skTipp = %{$skTipp};
+        say STDOUT "Looking for OA-URL";
         if ( scalar @tipps == 0 && ($skTipp{'comment'} eq "LF" || $skTipp{'comment'} eq "KF" || $skTipp{'comment'} eq "KW") ) {
           delete $skTipp{'comment'};
           push @tipps, \%skTipp;
@@ -3145,7 +3186,22 @@ sub processTitle {
           }
         }
       }
-    }else{
+      if ( scalar @tipps == 0) {
+        say STDOUT "Looking for Publisher-URL";
+        foreach my $skTipp (@skippedTipps) {
+          my %skTipp = %{$skTipp};
+
+          if ($skTipp{'comment'} eq "H" || $skTipp{'comment'} =~ "H;" || $skTipp{'comment'} eq "Verlag" || $skTipp{'comment'} =~ "Verlag;") {
+            if ( scalar @tipps == 0 ) {
+              push @tipps, \%skTipp;
+            }else{
+              say "Got a second Publisher-URL.. skipping!";
+            }
+          }
+        }
+      }
+    }
+    if (scalar @tipps == 0){
 
       # Add placeholder TIPP
 
@@ -3156,7 +3212,8 @@ sub processTitle {
       }
       say "No valid URL found, adding placeholder ($id)!";
 
-      my $packagePlatformName = $pkgInfo{'nominalPlatform'};
+      my $packagePlatformName = $pkgInfo{'nominalPlatform'}{'name'};
+      my $packagePlatformUrl = $pkgInfo{'nominalPlatform'}{'primaryUrl'};
       my $provider = $pkgInfo{'nominalProvider'};
 
       push @{ $titleWarnings{'all'} }, {
@@ -3166,16 +3223,15 @@ sub processTitle {
       push @{ $titleWarnings{'gvk'} }, {
           '009P0'=> "ZDB-URLs != GVK-URLs?"
       };
-      push @{ $titleWarnings{'zdb'} }, {
-          '009P0'=> "ZDB-URLs != GVK-URLs?"
-      };
 
       if($packagePlatformName){
         push @tipps, {
           'medium' => "Electronic",
           'platform' => {
-            'name' => $packagePlatformName ? $packagePlatformName : ""
+            'name' => $packagePlatformName ? $packagePlatformName : "",
+            'primaryUrl' => $packagePlatformUrl
           },
+          'url' = > $packagePlatformUrl,
           'status' => "Current",
           'title' => {
             'identifiers' => \@{$titleInfo{'identifiers'}},
@@ -3387,6 +3443,8 @@ sub processTipp {
     }
   }
 
+  my $tippComment = $publicComments ? $publicComments : $internalComments;
+
   $tipp{'status'} = "Current";
   $tipp{'medium'} = "Electronic";
   $tipp{'accessStart'} = "";
@@ -3400,16 +3458,16 @@ sub processTipp {
   my $hostUrl = "";
 
   if($url->has_recognized_scheme){
+
     $host = $url->authority;
     my $scheme = $url->scheme;
 
-    if(!$host){
+    if(!$host && !$tipp{'action'}){
       if($tippStats{'brokenURL'}){
         $tippStats{'brokenURL'}++;
       }else{
         $tippStats{'brokenURL'} = 1;
       }
-
       push @{ $tippWarnings{'all'} }, {
         '009P0'=> $sourceURL,
         'comment' => 'Aus der URL konnte kein Host ermittelt werden.'
@@ -3422,14 +3480,59 @@ sub processTipp {
       
       say "Could not extract host of URL $url";
       $tipp{'action'} = "error";
-      return (\%tipp, \%tippWarnings, \%tippStats, $publicComments);
+      return (\%tipp, \%tippWarnings, \%tippStats, $tippComment);
     }else{
-      if($scheme){
-        $hostUrl = "$scheme://";
+      my $hostUrl = "$scheme://$host";
+
+      my $checkedUrl;
+
+      if ($checkedUrls{$hostUrl}){
+        $checkedUrl = $checkedUrls{$hostUrl};
+      }else{
+        $checkedUrl = checkUrl($hostUrl);
+        $checkedUrls{$hostUrl} = $checkedUrl;
       }
-      $hostUrl .= $host;
+
+      my $checkedUrlUri = URI->new($checkedUrl);
+      my $checkedUrlHost = $checkedUrlUri->authority;
+      my $checkedBaseUrl = "$scheme://$checkedUrlHost";
+
+      if (!$checkedUrl && !$tipp{'action'}) {
+        if($tippStats{'invalidURL'}){
+          $tippStats{'invalidURL'}++;
+        }else{
+          $tippStats{'invalidURL'} = 1;
+        }
+
+        push @{ $tippWarnings{'all'} }, {
+          '009P0'=> $sourceURL,
+          'comment' => 'Die angegebene URL scheint nicht mehr zu funktionieren.'
+        };
+
+        push @{ $tippWarnings{'zdb'} }, {
+          '009Qx'=> $sourceURL,
+          'comment' => 'Die angegebene URL scheint nicht mehr zu funktionieren.'
+        };
+      }elsif ($checkedBaseUrl ne $hostUrl && !$tipp{'action'}) {
+        say "URL $hostUrl redirected to $checkedBaseUrl ..";
+        if($tippStats{'redirectedURL'}){
+          $tippStats{'redirectedURL'}++;
+        }else{
+          $tippStats{'redirectedURL'} = 1;
+        }
+
+        push @{ $tippWarnings{'all'} }, {
+          '009P0'=> $sourceURL,
+          'comment' => "Die angegebene URL wurde nach $checkedBaseUrl umgeleitet."
+        };
+
+        push @{ $tippWarnings{'zdb'} }, {
+          '009Qx'=> $sourceURL,
+          'comment' => "Die angegebene URL wurde nach $checkedBaseUrl umgeleitet."
+        };
+      }
     }
-  }else{
+  }elsif (!$tipp{'action'}) {
     say "Looks like a wrong URL!";
     
     if($tippStats{'brokenURL'}){
@@ -3451,11 +3554,11 @@ sub processTipp {
     say "Could not extract scheme of URL $url";
     $tipp{'action'} = "error";
   
-    return (\%tipp, \%tippWarnings, \%tippStats, $publicComments);
+    return (\%tipp, \%tippWarnings, \%tippStats, $tippComment);
   }
 
   $tipp{'platform'} = {
-    'name' => $host,
+    'name' => substr($host, 0, 3) eq 'www' ? substr($host, 4) : $host,
     'primaryUrl' => $hostUrl
   };
 
@@ -3553,7 +3656,7 @@ sub processTipp {
     'type' => $gokbType
   };
 
-  return (\%tipp, \%tippWarnings, \%tippStats, $publicComments);
+  return (\%tipp, \%tippWarnings, \%tippStats, $tippComment);
 }
 
 # Submit package/title JSON to GOKb-API
@@ -3677,7 +3780,7 @@ sub matchExistingOrgs {
 
       my $req = HTTP::Request->new(GET => $uri);
 
-      $req->authorization_basic($gokbCreds{'username'}, $gokbCreds{'password'});
+      # $req->authorization_basic($gokbCreds{'username'}, $gokbCreds{'password'});
 
       my $resp = $ua->request($req);
 
@@ -3693,7 +3796,7 @@ sub matchExistingOrgs {
             $publisherMatch = $record{'name'};
             last;
           }else{
-            foreach my $altname (@{$record{'altNames'}}){
+            foreach my $altname (@{$record{'altname'}}){
               my $gokbNormAltName = normalizeString($altname);
               if ($gokbNormAltName eq $normPubName) {
                 $publisherMatch = $record{'name'};
@@ -3707,6 +3810,8 @@ sub matchExistingOrgs {
         }
         if($publisherMatch) {
           say "Matched GOKb Org $publisherMatch for given Org: $pubName";
+        }else{
+          say "Could not find GOKb Org $pubName ..";
         }
         
 
@@ -3826,6 +3931,27 @@ sub convertToTimeStamp {
   $date .= " 00:00:00.000";
 
   return $date;
+}
+
+sub checkUrl {
+  my $url = shift;
+  my $mech = WWW::Mechanize->new(autocheck => 0);
+  $mech->max_redirect(0);
+  $mech->get($url);
+
+  my $status = $mech->status();
+  if (($status >= 300) && ($status < 400)) {
+    my $location = $mech->response()->header('Location');
+    if (defined $location) {
+      $mech->get(URI->new_abs($location, $mech->base()));
+      return $location;
+    }
+  }elsif($status == 200){
+    return $url;
+  }else{
+    say "URL $url is not currently valid!";
+    return;
+  }
 }
 
 # Create Dates (YYYY-MM-DD) from parts as in [YYYY,MM,DD,YYYY,MM,DD]
