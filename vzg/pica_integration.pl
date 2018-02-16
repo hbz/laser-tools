@@ -9,17 +9,18 @@
 #
 # Parameter:
 # --packages "data_source,username,password"
-#  * erstellt die Datei 'known_seals.json'
+#  * erstellt die JSON-Datei mit CMS-Paketinformationen
 # --json (ZDB-1-...)
 #  * generiert JSON für das angegebene Paket
-#  * 'known_seals.json' muss vorhanden sein
-#  * ohne folgendes Paketsigel werden alle (relevaten) Pakete in 'known_seals.json' verarbeitet.
+#  * Datei mit CMS-Paketinformationen muss vorhanden sein
+#  * ohne folgendes Paketsigel werden alle (relevaten) Pakete in der Datei mit CMS-Paketinformationen verarbeitet.
 # --endpoint
 #  * ändert die Datenquelle für Titeldaten
 #  * weglassen für Standardbezug über VZG-SRU
 #  * Mögliche Werte: "zdb","natliz","gvk" (Standard)
 # --post (URL)
-#  * folgt keine URL, wird die localhost Standardadresse verwendet
+#  * überträgt die ausgewählten Pakete an eine GOKb-Instanz
+#  * folgt keine URL, wird die localhost Standard-Adresse verwendet
 #  * nur zulässig nach --json
 # --new_orgs
 #  * überträgt gefundene Körperschaften mit GND-ID an die GOKb
@@ -30,8 +31,8 @@
 # --local_pkg
 #  * Statt dem Datenbezug über die ZDB wird ein bereits lokal im GOKb-JSON-Format vorhandenes Paket und dessen Titeldaten an die GOKb geschickt
 #  * nur zulässig in Verbindung mit --post UND --json mit Sigel
-#  * Dateiname Titel: "titles_[SIGEL]_[endpoint].json"
-#  * Dateiname Paket: "[SIGEL]_[endpoint].json"
+#  * Dateiname Titel: "./titles/titles_[SIGEL]_[endpoint].json"
+#  * Dateiname Paket: "./packages/[SIGEL]_[endpoint].json"
 
 use v5.22;
 use strict;
@@ -1041,8 +1042,8 @@ sub createJSON {
 #   say $globalStats{'numNoUrl'}." Titel ohne relevante URL";
 #   say $globalStats{'duplicateISSNs'}." ZDB-ID-Änderungen ohne ISSN-Anpassung";
 #   say $globalStats{'wrongISSN'}." eISSNs als Parallel-ISSN (005P0)";
-#   say $globalStats{'noPubGiven'}." Titel ohne Verlag (033An)";
-#   say $globalStats{'noPubMatch'}." Verlagsfelder mit der GOKb unbekanntem Verlagsnamen (033An)";
+#   say $globalStats{'noPublisher'}." Titel ohne Verlag (033An)";
+#   say $globalStats{'noPublisherMatch'}." Verlagsfelder mit der GOKb unbekanntem Verlagsnamen (033An)";
 #   say $globalStats{'pubFromGnd'}." Verlage durch GND-Verweis identifiziert (029Ga)";
 #   say $globalStats{'pubFromAuthor'}." als Verlag verwendete Autoren (021Ah)";
 #   say $globalStats{'pubFromCorp'}." als Verlag verwendete Primärkörperschaften (029Aa)";
@@ -1088,8 +1089,8 @@ sub processPackage {
     'pubFromAuthor' => 0,
     'pubFromCorp' => 0,
     'numNoUrl' => 0,
-    'noPubMatch' => 0,
-    'noPubGiven' => 0,
+    'noPublisherMatch' => 0,
+    'noPublisher' => 0,
     'correctedAbbrs' => 0,
     'relDatesInD' => 0,
     'usefulRelated' => 0,
@@ -1135,22 +1136,26 @@ sub processPackage {
         'message' => 'Die im Sigelverzeichnis für dieses Paket angegebene URL ist nicht erreichbar.'
       );
 
-      push @pkgInfoWarn, %pWarn;
-      $packageWarnings{'packageinfo'} = @pkgInfoWarn;
-    }elsif ($checkedUrl ne $packageInfo{'url'}) {
-      my @pkgInfoWarn;
-
-      my %pWarn = (
-        'value' => $packageInfo{'url'},
-        'status' => 'redirected',
-        'message' => 'Die im Sigelverzeichnis für dieses Paket angegebene URL ist nicht mehr aktuell.'
-      );
-
-      push @pkgInfoWarn, %pWarn;
-      $packageWarnings{'packageinfo'} = @pkgInfoWarn;
+      push @pkgInfoWarn, \%pWarn;
+      $packageWarnings{'all'}{'package'} = \@pkgInfoWarn;
+      $packageWarnings{'zdb'}{'package'} = \@pkgInfoWarn;
     }
+    
+#     elsif ($checkedUrl ne $packageInfo{'url'}) {
+#       my @pkgInfoWarn;
+# 
+#       my %pWarn = (
+#         'value' => $packageInfo{'url'},
+#         'status' => 'redirected',
+#         'message' => 'Die im Sigelverzeichnis für dieses Paket angegebene URL ist nicht mehr aktuell.'
+#       );
+# 
+#       push @pkgInfoWarn, \%pWarn;
+#       $packageWarnings{'all'}{'package'} = \@pkgInfoWarn;
+#       $packageWarnings{'zdb'}{'package'} = \@pkgInfoWarn;
+#     }
 
-    $pkgPlatform{'primaryUrl'} = $checkedUrl;
+    $pkgPlatform{'primaryUrl'} = lc $packageInfo{'url'};
 
     if($packageInfo{'platform'}) {
       $pkgPlatform{'name'} = $packageInfo{'platform'};
@@ -1159,7 +1164,7 @@ sub processPackage {
       my $pkgScheme = $pkgUrl->scheme;
       my $pkgHost = $pkgUrl->host;
 
-      my $urlName = substr($pkgHost, 0, 3) eq 'www' ? substr($pkgHost, 4) : $pkgHost;
+      my $urlName = lc (substr($pkgHost, 0, 3) eq 'www' ? substr($pkgHost, 4) : $pkgHost);
 
       $pkgPlatform{'name'} = $urlName;
     }
@@ -2224,10 +2229,10 @@ sub processTitle {
   my $corpField = pica_value($titleRecord, '029Aa');
 
   if(!$checkPubs){
-    if($titleStats{'noPubGiven'}){
-      $titleStats{'noPubGiven'}++;
+    if($titleStats{'noPublisher'}){
+      $titleStats{'noPublisher'}++;
     }else{
-      $titleStats{'noPubGiven'} = 1;
+      $titleStats{'noPublisher'} = 1;
     }
   }
   
@@ -2408,10 +2413,10 @@ sub processTitle {
         || $tempPub =~ /[\[\]]/
         || $tempPub =~ /u\.\s?a\./
       ){
-        if($titleStats{'noPubMatch'}){
-          $titleStats{'noPubMatch'}++;
+        if($titleStats{'noPublisherMatch'}){
+          $titleStats{'noPublisherMatch'}++;
         }else{
-          $titleStats{'noPubMatch'} = 1;
+          $titleStats{'noPublisherMatch'} = 1;
         }
 
         push @{ $titleWarnings{'all'} }, {
@@ -3192,10 +3197,9 @@ sub processTitle {
           my %skTipp = %{$skTipp};
 
           if ($skTipp{'comment'} eq "H" || $skTipp{'comment'} =~ "H;" || $skTipp{'comment'} eq "Verlag" || $skTipp{'comment'} =~ "Verlag;") {
-            if ( scalar @tipps == 0 ) {
-              push @tipps, \%skTipp;
-            }else{
-              say "Got a second Publisher-URL.. skipping!";
+            push @tipps, \%skTipp;
+            if ( scalar @tipps > 0 ) {
+              say "Got more than one Publisher-URL..";
             }
           }
         }
@@ -3231,7 +3235,7 @@ sub processTitle {
             'name' => $packagePlatformName ? $packagePlatformName : "",
             'primaryUrl' => $packagePlatformUrl
           },
-          'url' = > $packagePlatformUrl,
+          'url' => $packagePlatformUrl,
           'status' => "Current",
           'title' => {
             'identifiers' => \@{$titleInfo{'identifiers'}},
@@ -3437,6 +3441,11 @@ sub processTipp {
       }else{
         $tippStats{'otherURLs'} = 1;
       }
+
+      if($publicComments eq "LF") {
+        $tipp{'paymentType'} = "OA"
+      }
+
     }else{
       say STDOUT "Skipping TIPP .. wrong Type or source: $internalComments, $publicComments";
       $tipp{'action'} = "skipped";
@@ -3482,55 +3491,34 @@ sub processTipp {
       $tipp{'action'} = "error";
       return (\%tipp, \%tippWarnings, \%tippStats, $tippComment);
     }else{
-      my $hostUrl = "$scheme://$host";
+      $hostUrl = "$scheme://$host";
 
-      my $checkedUrl;
-
-      if ($checkedUrls{$hostUrl}){
-        $checkedUrl = $checkedUrls{$hostUrl};
-      }else{
-        $checkedUrl = checkUrl($hostUrl);
-        $checkedUrls{$hostUrl} = $checkedUrl;
-      }
-
-      my $checkedUrlUri = URI->new($checkedUrl);
-      my $checkedUrlHost = $checkedUrlUri->authority;
-      my $checkedBaseUrl = "$scheme://$checkedUrlHost";
-
-      if (!$checkedUrl && !$tipp{'action'}) {
-        if($tippStats{'invalidURL'}){
-          $tippStats{'invalidURL'}++;
-        }else{
-          $tippStats{'invalidURL'} = 1;
-        }
-
-        push @{ $tippWarnings{'all'} }, {
-          '009P0'=> $sourceURL,
-          'comment' => 'Die angegebene URL scheint nicht mehr zu funktionieren.'
-        };
-
-        push @{ $tippWarnings{'zdb'} }, {
-          '009Qx'=> $sourceURL,
-          'comment' => 'Die angegebene URL scheint nicht mehr zu funktionieren.'
-        };
-      }elsif ($checkedBaseUrl ne $hostUrl && !$tipp{'action'}) {
-        say "URL $hostUrl redirected to $checkedBaseUrl ..";
-        if($tippStats{'redirectedURL'}){
-          $tippStats{'redirectedURL'}++;
-        }else{
-          $tippStats{'redirectedURL'} = 1;
-        }
-
-        push @{ $tippWarnings{'all'} }, {
-          '009P0'=> $sourceURL,
-          'comment' => "Die angegebene URL wurde nach $checkedBaseUrl umgeleitet."
-        };
-
-        push @{ $tippWarnings{'zdb'} }, {
-          '009Qx'=> $sourceURL,
-          'comment' => "Die angegebene URL wurde nach $checkedBaseUrl umgeleitet."
-        };
-      }
+#       my $checkedUrl;
+# 
+#       if ($checkedUrls{$hostUrl}){
+#         $checkedUrl = $checkedUrls{$hostUrl};
+#       }else{
+#         $checkedUrl = checkUrl($hostUrl);
+#         $checkedUrls{$hostUrl} = $checkedUrl;
+#       }
+# 
+#       if (!$checkedUrl && !$tipp{'action'}) {
+#         if($tippStats{'invalidURL'}){
+#           $tippStats{'invalidURL'}++;
+#         }else{
+#           $tippStats{'invalidURL'} = 1;
+#         }
+# 
+#         push @{ $tippWarnings{'all'} }, {
+#           '009P0'=> $sourceURL,
+#           'comment' => 'Die Domain der angegebenen URL scheint nicht mehr zu existieren.'
+#         };
+# 
+#         push @{ $tippWarnings{'zdb'} }, {
+#           '009Qx'=> $sourceURL,
+#           'comment' => 'Die Domain der angegebenen URL scheint nicht mehr zu existieren.'
+#         };
+#       }
     }
   }elsif (!$tipp{'action'}) {
     say "Looks like a wrong URL!";
@@ -3558,7 +3546,7 @@ sub processTipp {
   }
 
   $tipp{'platform'} = {
-    'name' => substr($host, 0, 3) eq 'www' ? substr($host, 4) : $host,
+    'name' => lc (substr($host, 0, 3) eq 'www' ? substr($host, 4) : $host),
     'primaryUrl' => $hostUrl
   };
 
@@ -3772,7 +3760,7 @@ sub matchExistingOrgs {
   if(!$matchOrgsByFile){
     if ($gokbCreds{'username'} && $gokbCreds{'password'}) {
       my $ua = LWP::UserAgent->new;
-      my %params = ( 'componentType' => "Org", 'label' => $pubName );
+      my %params = ( 'componentType' => "Org", 'label' => $pubName, 'max' => 20 );
       my $url = $gokbCreds{'base'}."api/find?";
       my $uri = URI->new($url);
 
@@ -3935,6 +3923,7 @@ sub convertToTimeStamp {
 
 sub checkUrl {
   my $url = shift;
+  
   my $mech = WWW::Mechanize->new(autocheck => 0);
   $mech->max_redirect(0);
   $mech->get($url);
@@ -3943,8 +3932,18 @@ sub checkUrl {
   if (($status >= 300) && ($status < 400)) {
     my $location = $mech->response()->header('Location');
     if (defined $location) {
-      $mech->get(URI->new_abs($location, $mech->base()));
-      return $location;
+      my $redirectMech = WWW::Mechanize->new(autocheck => 0);
+      $redirectMech->get(URI->new_abs($location, $mech->base()));
+      
+      if ($redirectMech->status() >= 400) {
+        say "URL $url is not currently valid!";
+        return;
+      }else{
+        my $new_url =  $redirectMech->uri();
+        $new_url = $new_url->as_string();
+        say "URL $url redirected to $new_url";
+        return $new_url;
+      }
     }
   }elsif($status == 200){
     return $url;
