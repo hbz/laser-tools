@@ -43,6 +43,7 @@ use JSON;
 use URI;
 use Unicode::Normalize;
 use IO::Tee;
+use Log::Log4perl;
 use Time::Duration;
 binmode(STDOUT, ":utf8");
 
@@ -87,7 +88,7 @@ my $requestedType = "journal";
 
 ## Name der JSON-Datei mit Paketinformationen
 
-my $knownSeals = 'NL_Pakete.json';
+my $knownSeals = 'CMS_Pakete.json';
 
 ## Standard-URL der Ziel-GOKb
 
@@ -97,28 +98,59 @@ my $filter;
 
 ### logging
 
-my $logFnDate = strftime '%Y-%m-%d', localtime;
-my $logFn = 'logs_'.$logFnDate.'.log';
+# my $logFnDate = strftime '%Y-%m-%d', localtime;
+# my $logFn = 'logs_'.$logFnDate.'.log';
+#
+# $logDir->mkpath( { verbose => 0 } );
+#
+# my $logFile = $logDir->file($logFn);
+#
+# $logFile->touch();
+#
+# my $out_logs = $logFile->opena();
+#
+# my $tee = new IO::Tee(\*STDOUT, $out_logs);
+#
+# *STDERR = *$tee{IO};
+#
+# select $tee;
 
-$logDir->mkpath( { verbose => 0 } );
 
-my $logFile = $logDir->file($logFn);
+  my $conf = q(
 
-$logFile->touch();
+    log4perl.logger                    = DEBUG, Logfile, Screen
 
-my $out_logs = $logFile->opena();
+    log4perl.filter.MatchFile      = Log::Log4perl::Filter::LevelRange
+    log4perl.filter.MatchFile.LevelMin = INFO
+    log4perl.filter.MatchFile.LevelMax = FATAL
+    log4perl.filter.MatchFile.AcceptOnMatch = true
+    log4perl.appender.Logfile          = Log::Log4perl::Appender::File
+    log4perl.appender.Logfile.Filter   = MatchFile
+    log4perl.appender.Logfile.filename = logs/test.log
+    log4perl.appender.Logfile.layout   = Log::Log4perl::Layout::PatternLayout
+    log4perl.appender.Logfile.layout.ConversionPattern = %d - %p (%L) -- %m%n
 
-my $tee = new IO::Tee(\*STDOUT, $out_logs);
+    log4perl.filter.MatchScreen      = Log::Log4perl::Filter::LevelRange
+    log4perl.filter.MatchScreen.LevelMin = DEBUG
+    log4perl.filter.MatchScreen.LevelMax = FATAL
+    log4perl.filter.MatchScreen.AcceptOnMatch = true
+    log4perl.appender.Screen         = Log::Log4perl::Appender::Screen
+    log4perl.appender.Screen.Filter  = MatchScreen
+    log4perl.appender.Screen.stderr  = 0
+    log4perl.appender.Screen.layout  = Log::Log4perl::Layout::PatternLayout
+    log4perl.appender.Screen.layout.ConversionPattern = %d - %p (%L) -- %m%n
+  );
 
-*STDERR = *$tee{IO};
+     # ... passed as a reference to init()
+  Log::Log4perl::init( \$conf );
 
-select $tee;
+my $logger = Log::Log4perl->get_logger();
 
 ## Öffne JSON-Datei mit GOKb-Organisationsdaten
 
 my $ncsu_orgs = do {
   open(my $orgs_in, '<' , "ONLD.jsonld")
-      or die("Can't open ONLD.jsonld: $!\n");
+      or $logger->logdie("Can't open ONLD.jsonld: $!");
 
   local $/;
 
@@ -126,7 +158,7 @@ my $ncsu_orgs = do {
 };
 
 my %orgsJSON = %{decode_json($ncsu_orgs)}
-  or die "Konnte JSON mit NCSU-Orgs nicht dekodieren! \n";
+  or $logger->logdie("Konnte JSON mit NCSU-Orgs nicht dekodieren!");
   
 my $matchOrgsByFile = 0;
 
@@ -138,7 +170,7 @@ my %gokbCreds;
 if(-e 'login.json'){
   my $login_data = do {
     open(my $logins, '<' , "login.json")
-        or die("Can't open login.json: $!\n");
+        or $logger->logdie("Can't open login.json: $!");
 
     local $/;
 
@@ -146,7 +178,7 @@ if(-e 'login.json'){
   };
 
   my %logins = %{decode_json($login_data)}
-    or die "Konnte JSON mit Logins nicht dekodieren! \n";
+    or $logger->logdie("Konnte JSON mit Logins nicht dekodieren!");
 
   if($logins{'cms'}){
     %cmsCreds = %{ $logins{'cms'} };
@@ -181,7 +213,7 @@ if( $argType >= 0) {
   if($ARGV[$argType+1] && any { $_ eq $ARGV[$argType+1] } ("journal","book","all") ) {
     $requestedType = $ARGV[$argType+1];
   }else{
-    die "Ungültiger Materialtyp! Möglich sind 'journal'(Standard), 'book' und 'all'";
+    $logger->logdie("Ungültiger Materialtyp! Möglich sind 'journal'(Standard), 'book' und 'all'");
   }
 }
 
@@ -196,7 +228,7 @@ if($argEndpoint >= 0) {
   if($ARGV[$argEndpoint+1] && any { $_ eq $ARGV[$argEndpoint+1] } ("zdb","natliz","gvk") ) {
     $endpoint = $ARGV[$argEndpoint+1];
   }else{
-    die "Ungültiger Endpunkt! Möglich sind 'zdb', 'natliz' und 'gvk'(Standard)";
+    $logger->logdie("Ungültiger Endpunkt! Möglich sind 'zdb', 'natliz' und 'gvk'(Standard)");
   }
 }
 
@@ -213,12 +245,12 @@ if($argP >= 0){
       $cmsCreds{'username'} = $creds[1];
       $cmsCreds{'password'} = $creds[2];
     }else{
-      die "Falsches Format der DB-Daten! Abbruch!";
+      $logger->logdie("Falsches Format der DB-Daten! Abbruch!");
     }
   }
 
   if(!$cmsCreds{'base'} || !$cmsCreds{'username'} || !$cmsCreds{'password'}){
-    die "Datenbankinformationen fehlen/falsch! Format ist: \"data_source,username,password\"";
+    $logger->logdie("Datenbankinformationen fehlen/falsch! Format ist: \"data_source,username,password\"");
   }
 
   if($argJ >= 0){
@@ -242,22 +274,22 @@ if($argP >= 0){
         if($gokbCreds{'username'} && $gokbCreds{'password'}){
           $post = 1;
         }else{
-          say "Kein Benutzername/Passwort, überspringe GOKb-Import!";
+          $logger->warn("Kein Benutzername/Passwort, überspringe GOKb-Import!");
         }
       }
       if(index($ARGV[$argJ+1], "ZDB") == 0){
         $filter = $ARGV[$argJ+1];
         createJSON($post, $endpoint, $newOrgs, $localPkg);
       }else{
-        say "Pakete abgerufen, erstelle JSONs!";
+        $logger->info("Pakete abgerufen, erstelle JSONs!");
 
         createJSON($post, $endpoint, $newOrgs, $localPkg);
       }
     }else{
-      die "Erstelle keine JSONs, Sigeldatei wurde nicht erstellt!";
+      $logger->logdie("Erstelle keine JSONs, Sigeldatei wurde nicht erstellt!");
     }
   }else{
-      say "Erstelle nur Paketdatei $knownSeals!";
+      $logger->info("Erstelle nur Paketdatei $knownSeals!");
 
       getSeals($cmsCreds{'base'},$cmsCreds{'username'},$cmsCreds{'password'});
   }
@@ -287,24 +319,24 @@ if($argP >= 0){
       if($gokbCreds{'username'} && $gokbCreds{'password'}){
         $post = 1;
       }else{
-        say "Kein Benutzername/Passwort, überspringe GOKb-Import!";
+        $logger->warn("Kein Benutzername/Passwort, überspringe GOKb-Import!");
       }
     }
     if($ARGV[$argJ+1] && index($ARGV[$argJ+1], "ZDB") == 0){
       $filter = $ARGV[$argJ+1];
 
-      say "Paketdatei gefunden, erstelle JSON für $filter!";
+      $logger->info("Paketdatei gefunden, erstelle JSON für $filter!");
 
       createJSON($post, $endpoint, $newOrgs, $localPkg);
     }else{
-      say "Paketdatei gefunden, erstelle JSONs!";
+      $logger->info("Paketdatei gefunden, erstelle JSONs!");
 
       createJSON($post, $endpoint, $newOrgs, $localPkg);
     }
   }else{
-    say "Paketdatei nicht vorhanden!";
+    $logger->error("Paketdatei nicht vorhanden!");
 
-    die "Zum Erstellen mit Parameter '--packages' starten!";
+    $logger->logdie("Zum Erstellen mit Parameter '--packages' starten!");
   }
 }
 
@@ -328,8 +360,7 @@ if(scalar @ARGV == 0 || (!$argJ && !$argP)){
 sub getZdbName {
   my $sig = shift;
 
-  print strftime '%Y-%m-%d %H:%M:%S', localtime;
-  print " - Sigel: $sig \n";
+  $logger->info("Sigel: $sig");
 
   my %pkgInfos = (
     'name' => "",
@@ -459,7 +490,7 @@ sub getSeals {
     seal as sigel,
     meta_type as type
     FROM lmodels
-    WHERE \( meta_type = 'NLLicenceModelStandard' \)
+    WHERE \( meta_type = 'NLLicenceModelStandard' OR meta_type = 'NLLicenceModelOptIn' \)
     AND wf_state='published';
   );
 
@@ -503,7 +534,11 @@ sub getSeals {
       if($licence_type eq 'NLLicenceModelStandard'){
         $lType = "NL";
       }elsif($licence_type eq 'NLLicenceModelOptIn'){
-        $lType = "AL";
+        if ($pkgInfos{'type'} =~ /Allianz-Lizenz/ ) {
+          $lType = "AL";
+        }else{
+          $lType = $pkgInfos{'type'};
+        }
       }
 
       my %pkg = (
@@ -590,9 +625,9 @@ sub getSeals {
                     recordSchema => 'picaxml',
                     parser => 'picaxml'
                 );
-                say STDOUT "Suche nach ISIL: $tempISIL!";
+                $logger->info("Suche nach ISIL: $tempISIL!");
                 my $orgImporter = Catmandu::Importer::SRU->new(%bibAttrs)
-                  or die "Abfrage über ".$bibAttrs{'base'}." fehlgeschlagen!\n";
+                  or $logger->logdie("Abfrage über ".$bibAttrs{'base'}." fehlgeschlagen!");
 
                 my $sruOrg = $orgImporter->first();
 
@@ -602,7 +637,7 @@ sub getSeals {
                   $knownIsils{$tempISIL} = 1;
                 }else{
                   $pkg{'orgStats'}{'numWrongSig'}++;
-                  say "Suche nach $tempISIL erfolglos!";
+                  $logger->warn("Suche nach $tempISIL erfolglos!");
                   $knownIsils{$tempISIL} = 0;
                 }
               }elsif($knownIsils{$tempISIL} == 1){
@@ -610,7 +645,7 @@ sub getSeals {
               }
             }else{
               $pkg{'orgStats'}{'numWrongSig'}++;
-              say "Sigel $orgSigel ist offensichtlich ungültig.";
+              $logger->warn("Sigel $orgSigel ist offensichtlich ungültig.");
             }
           }else{
             $pkg{'orgStats'}{'numWrongSig'}++;
@@ -634,12 +669,12 @@ sub getSeals {
       my %zdbAttrs = (
           base => 'http://sru.gbv.de/zdbdb',
           query => 'pica.isl='.$pkgSigel,
-          recordSchema => 'picaxml',
+          recordSchema => 'picatitle',
           _max_results => 1,
           parser => 'picaxml'
       );
       my $titleImporter = Catmandu::Importer::SRU->new(%zdbAttrs)
-        or die " - Abfrage über ".$zdbAttrs{'base'}." fehlgeschlagen!\n";
+        or $logger->logdie("Abfrage über ".$zdbAttrs{'base'}." fehlgeschlagen!");
       my $zdbTitle = $titleImporter->first();
 
       if(ref($zdbTitle) eq 'HASH'){
@@ -658,7 +693,7 @@ sub getSeals {
 
       sleep 1;
     }else{
-      say "Kein Paketsigel oder falsches Format in zuid: $zuid.";
+      $logger->error("Kein Paketsigel oder falsches Format in zuid: $zuid.");
     }
   };
   $dbh->disconnect;
@@ -687,12 +722,12 @@ sub createJSON {
   my $localPkg = shift;
   
   if($localPkg && !$filter){
-    die "Für die Verwendung bestehender JSON-Dateien muss ein Paketsigel hinter '--json' angegeben werden!\n";
+    $logger->logdie("Für die Verwendung bestehender JSON-Dateien muss ein Paketsigel hinter '--json' angegeben werden!");
   }
 
   my $json_seals = do {
     open(my $json_fh, '<' , $knownSeals)
-        or die("Can't open \$knownSeals\": $!\n");
+        or $logger->logdie("Can't open \$knownSeals\": $!");
     local $/;
     <$json_fh>
   };
@@ -700,16 +735,16 @@ sub createJSON {
   # Input JSON handling
 
   %known = %{decode_json($json_seals)}
-    or die "JSON nicht vorhanden!\n";
+    or $logger->logdie("JSON nicht vorhanden!");
   my %knownSelection;
 
   if($filter){
     if($known{$filter}){
       $knownSelection{$filter} = $known{$filter};
 
-      say "Generating JSON only for $filter!";
+      $logger->info("Generating JSON only for $filter!");
     }else{
-      say "Paket nicht bekannt! Suche Metadaten über Sigelstelle..";
+      $logger->warn("Paket nicht bekannt! Suche Metadaten über Sigelstelle..");
 
       my %pkgInfos = getZdbName($filter);
       my $lType;
@@ -722,9 +757,9 @@ sub createJSON {
         }else{
           $lType = $pkgInfos{'type'};
         }
-        say "Verarbeite Paket vom Typ ".$pkgInfos{'type'}."";
+        $logger->info("Verarbeite Paket vom Typ ".$pkgInfos{'type'}."");
       }else{
-        say "Konnte den Pakettyp nicht identifizieren.";
+        $logger->error("Konnte den Pakettyp nicht identifizieren.");
         return -1;
       }
 
@@ -740,14 +775,14 @@ sub createJSON {
           scope => $pkgInfos{'scope'},
         };
       }else{
-        say "Zurückgeliefertes Paket hat keinen Namen!";
+        $logger->error("Zurückgeliefertes Paket hat keinen Namen!");
         return -1;
       }
     }
   }else{
     %knownSelection = %known;
 
-    say "Generating JSON for all packages!";
+    $logger->info("Generating JSON for all packages!");
   }
 
   $packageDir->mkpath( { verbose => 0 } );
@@ -814,7 +849,7 @@ sub createJSON {
 
   foreach my $sigel (keys %knownSelection){
   
-    say "Processing Package ".($packagesTotal + 1).", ".$sigel."...";
+    $logger->info("Processing Package ".($packagesTotal + 1).", ".$sigel."...");
     
     my $pkgScope = $knownSelection{$sigel}{'scope'};
     my $noZdbOrgs = 0;
@@ -826,25 +861,25 @@ sub createJSON {
     }
     
     if($requestedType eq "journal" && $pkgScope !~ /E-Journals/){
-      say "Paket ist nicht als E-Journal-Paket markiert. Überspringe Paket.";
+      $logger->info("Paket ist nicht als E-Journal-Paket markiert. Überspringe Paket.");
       next;
     }
     my %package;
     
     if($localPkg == 1){
-      say STDOUT "Verwende lokale Dateien..";
+      $logger->debug("Verwende lokale Dateien..");
       my $json_pkg = do {
         open(my $json_fh, '<' , $packageFile)
-            or die("Can't open \$packageFile\": $!\n");
+            or $logger->logdie("Can't open \$packageFile\": $!");
         local $/;
         <$json_fh>
       };
     
       %package = %{decode_json($json_pkg)}
-          or die "Paket-JSON nicht lesbar!\n";
+          or $logger->logdie("Paket-JSON nicht lesbar!");
           
       if (scalar @{$package{'tipps'}} == 0){
-        say "Paket $sigel hat keine TIPPs und wird nicht angelegt!";
+        $logger->warn("Paket $sigel hat keine TIPPs und wird nicht angelegt!");
         $noTipps .= "$sigel ";
         next;
       }
@@ -858,7 +893,7 @@ sub createJSON {
       %package = %{$package};
 
       if (scalar @{$package{'tipps'}} == 0){
-        say "Paket $sigel hat keine TIPPs und wird nicht angelegt!";
+        $logger->warn("Paket $sigel hat keine TIPPs und wird nicht angelegt!");
         $noTipps .= "$sigel ";
         next;
       }
@@ -896,19 +931,19 @@ sub createJSON {
 
     if($postData == 1){
       sleep 10;
-      say "Submitting Package $sigel to GOKb (".$gokbCreds{'base'}.")";
+      $logger->info("Submitting Package $sigel to GOKb (".$gokbCreds{'base'}.")");
 
       my $postResult = postData('crossReferencePackage', \%package);
 
       if($postResult != 0){
-        say "Could not Upload Package $sigel! Errorcode $postResult";
+        $logger->error("Could not Upload Package $sigel! Errorcode $postResult");
         
         if ($postResult != 403) {
-          say "Giving it one more try!";
+          $logger->info("Giving it one more try!");
           sleep 10;
           
           if(postData('crossReferencePackage', \%package) != 0){
-            say "Second try failed as well. Adding to report..";
+            $logger->error("Second try failed as well. Adding to report..");
             $skippedPackages .= $sigel." ";
           }
         } else {
@@ -956,26 +991,26 @@ sub createJSON {
   }else{
     my $json_titles = do {
       open(my $json_fh, '<' , $titlesFile)
-          or warn("Konnte \$tfileName\" nicht öffnen: $!\n");
+          or $logger->warn("Konnte \$tfileName\" nicht öffnen: $!\n");
       local $/;
       <$json_fh>
     };
   
     if($json_titles){
       @allTitles = @{decode_json($json_titles)}
-          or warn "Titel-JSON konnte nicht gelesen werden!\n";
+          or $logger->warn("Titel-JSON konnte nicht gelesen werden!\n");
     }
         
     my $json_orgs = do {
       open(my $json_fh, '<' , $orgsFile)
-          or warn("Konnte \$ofileName\" nicht öffnen: $!\n");
+          or $logger->warn("Konnte \$ofileName\" nicht öffnen: $!\n");
       local $/;
       <$json_fh>
     };
     
     if($json_orgs){
       %orgsToAdd = %{decode_json($json_orgs)}
-          or warn "Org-JSON konnte nicht gelesen werden!\n";
+          or $logger->warn("Org-JSON konnte nicht gelesen werden!\n");
     }
   }
 
@@ -987,14 +1022,14 @@ sub createJSON {
   if($postData == 1 && $newOrgs == 1){
     sleep 3;
 
-    say "Submitting $numNewOrgs Orgs to GOKb (".$gokbCreds{'base'}.")";
+    $logger->info("Submitting $numNewOrgs Orgs to GOKb (".$gokbCreds{'base'}.")");
 
     foreach my $org (keys %orgsToAdd){
       my %curOrg = %{ $orgsToAdd{$org} };
       my $postResult = postData('assertOrg', \%curOrg);
 
       if($postResult != 0){
-        say "Could not upload Org! Errorcode $postResult";
+        $logger->error("Could not upload Org! Errorcode $postResult");
 
         $skippedOrgs++;
       }
@@ -1010,14 +1045,14 @@ sub createJSON {
 
     my $sumTitles = scalar @allTitles;
 
-    say "Submitting $sumTitles titles to GOKb (".$gokbCreds{'base'}.")";
+    $logger->info("Submitting $sumTitles titles to GOKb (".$gokbCreds{'base'}.")");
 
     foreach my $title (@allTitles){
       my %curTitle = %{ $title };
       my $postResult = postData('crossReferenceTitle', \%curTitle);
 
       if($postResult != 0){
-        say "Could not upload Title! Errorcode $postResult";
+        $logger->error("Could not upload Title! Errorcode $postResult");
 
         $skippedTitles++;
       }
@@ -1029,13 +1064,12 @@ sub createJSON {
   my $timeElapsed = duration(time() - $startTime);
   my $finishedRun = strftime '%Y-%m-%d %H:%M:%S', localtime;
 
-  say "\n**********************\n";
+  $logger->info("**********************");
 
-  say "Run finished at $finishedRun";
-  say "Runtime: $timeElapsed";
+  $logger->info("Run finished after $timeElapsed");
   
   foreach my $gStatKey (keys %globalStats){
-    say "$gStatKey: ".$globalStats{$gStatKey};
+    $logger->info("$gStatKey: ".$globalStats{$gStatKey});
   }
   
 #   say $globalStats{'titlesTotal'}." relevante Titel in $packagesTotal Paketen";
@@ -1049,22 +1083,22 @@ sub createJSON {
 #   say $globalStats{'pubFromCorp'}." als Verlag verwendete Primärkörperschaften (029Aa)";
 
   if($skippedPackages ne ""){
-    say "Wegen Fehler beim Upload übersprungene Pakete: $skippedPackages";
+    $logger->warn("Wegen Fehler beim Upload übersprungene Pakete: $skippedPackages");
   }
   
   if($noTipps ne ""){
-    say "Pakete ohne TIPPs: $noTipps";
+    $logger->warn("Pakete ohne TIPPs: $noTipps");
   }
 
   if($skippedTitles != 0){
-    say "Anzahl wegen Fehler beim Upload übersprungene Titel: $skippedTitles";
+    $logger->warn("Anzahl wegen Fehler beim Upload übersprungene Titel: $skippedTitles");
   }
 
   if($skippedOrgs != 0){
-    say "Anzahl wegen Fehler beim Upload übersprungene Orgs: $skippedOrgs";
+    $logger->warn("Anzahl wegen Fehler beim Upload übersprungene Orgs: $skippedOrgs");
   }
 
-  say "\n**********************\n";
+  $logger->info("**********************");
 }
 
 
@@ -1155,7 +1189,7 @@ sub processPackage {
 #       $packageWarnings{'zdb'}{'package'} = \@pkgInfoWarn;
 #     }
 
-    $pkgPlatform{'primaryUrl'} = lc $packageInfo{'url'};
+    $pkgPlatform{'primaryUrl'} = $packageInfo{'url'};
 
     if($packageInfo{'platform'}) {
       $pkgPlatform{'name'} = $packageInfo{'platform'};
@@ -1174,7 +1208,7 @@ sub processPackage {
 
   my $pkgType = $packageInfo{'type'};
 
-  say "Package Type is: $pkgType, endpoint is $endpoint";
+  $logger->info("Package Type is: $pkgType, endpoint is $endpoint");
 
   if($endpoint eq 'gvk' && $pkgType eq "NL"){
     %pkgSource = (
@@ -1184,9 +1218,8 @@ sub processPackage {
     );
   }elsif($endpoint eq 'zdb' || ($endpoint eq 'gvk' && $pkgType eq "AL" )){
     %pkgSource = (
-      url => "http://sru.gbv.de/zdbdb",
-      name => "ZDB-SRU",
-      normname => "ZDB_SRU"
+      url => "http://www.zeitschriftendatenbank.de",
+      name => "ZDB - Zeitschriftendatenbank"
     );
   }elsif($endpoint eq 'natliz'){
     %pkgSource = (
@@ -1204,6 +1237,7 @@ sub processPackage {
     variantNames => [$provider ne "" ? $pkgNoProv : ""],
     scope => "",
     listStatus => "In Progress",
+    editStatus => "In Progress",
     breakable => "No",
     consistent => "Yes",
     fixed => "No",
@@ -1238,25 +1272,23 @@ sub processPackage {
     
     $attrs{'base'} = 'http://sru.gbv.de/gvk';
     $attrs{'query'} = $qryString;
-    $attrs{'recordSchema'} = 'picaxml';
+    $attrs{'recordSchema'} = 'picatitle';
     $attrs{'parser'} = 'picaxml';
     $attrs{'_max_results'} = 3;
 
     my $sruTitles = Catmandu::Importer::SRU->new(%attrs)
-      or die "Abfrage über ".$attrs{'base'}." fehlgeschlagen!\n";
+      or $logger->logdie("Abfrage über ".$attrs{'base'}." fehlgeschlagen!");
       
     eval{
       while (my $titleRecord = $sruTitles->next){
         $currentTitle++;
         if(pica_value($titleRecord, '006Z0')){
-          print STDOUT "Verarbeite Titel ".($currentTitle);
-          print STDOUT " von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '006Z0').")\n";
+          $logger->info("Verarbeite Titel ".($currentTitle)." von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '006Z0').")");
         }else{
-          print STDOUT "Verarbeite Titel ".($currentTitle);
-          print STDOUT " von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '003@0').")\n";
+          $logger->info("Verarbeite Titel ".($currentTitle)." von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '003@0').")");
         }
         
-        my ($tipps, $titleStats, $titleWarnings) = processTitle($titleRecord, $pkgType, %packageHeader);
+        my ($tipps, $titleStats, $titleWarnings) = processTitle($titleRecord, $pkgType, "gvk", %packageHeader);
         
         my @tipps = @{$tipps};
         my %titleStats = %{$titleStats};
@@ -1282,7 +1314,7 @@ sub processPackage {
       }
       1;
     } or do {
-      say "SRU error for ".$packageInfo{'sigel'}.":";
+      $logger->error("SRU error for ".$packageInfo{'sigel'}.":");
       say $@;
       
       $package{'tipps'} = [];
@@ -1294,25 +1326,24 @@ sub processPackage {
     
     $attrs{'base'} = 'http://sru.gbv.de/zdbdb';
     $attrs{'query'} = $qryString;
-    $attrs{'recordSchema'} = 'picaxml';
+    $attrs{'recordSchema'} = 'picatitle';
     $attrs{'parser'} = 'picaxml';
     $attrs{'_max_results'} = 3;
     
     my $sruTitles = Catmandu::Importer::SRU->new(%attrs)
-      or die "Abfrage über ".$attrs{'base'}." fehlgeschlagen!\n";
+      or $logger->logdie("Abfrage über ".$attrs{'base'}." fehlgeschlagen!");
     
     eval{
+      $logger->info("Got results for package from ZDB!");
       while (my $titleRecord = $sruTitles->next){
         $currentTitle++;
         if(pica_value($titleRecord, '006Z0')){
-          print STDOUT "Verarbeite Titel ".($currentTitle);
-          print STDOUT " von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '006Z0').")\n";
+          $logger->info("Verarbeite Titel ".($currentTitle)." von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '006Z0').")");
         }else{
-          print STDOUT "Verarbeite Titel ".($currentTitle);
-          print STDOUT " von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '003@0').")\n";
+          $logger->info("Verarbeite Titel ".($currentTitle)." von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '003@0').")");
         }
 
-        my ($tipps, $titleStats, $titleWarnings) = processTitle($titleRecord, $pkgType, %packageHeader);
+        my ($tipps, $titleStats, $titleWarnings) = processTitle($titleRecord, $pkgType, "zdb", %packageHeader);
         
         my @tipps = @{$tipps};
         my %titleStats = %{$titleStats};
@@ -1338,7 +1369,7 @@ sub processPackage {
       }
       1;
     } or do {
-      say "SRU error for ".$packageInfo{'sigel'}.":";
+      $logger->error("SRU error for ".$packageInfo{'sigel'}.":");
       say $@;
       
       $package{'tipps'} = [];
@@ -1351,24 +1382,23 @@ sub processPackage {
     
       $attrs{'base'} = 'http://sru.gbv.de/gvk';
       $attrs{'query'} = $qryString;
-      $attrs{'recordSchema'} = 'picaxml';
+      $attrs{'recordSchema'} = 'picatitle';
       $attrs{'parser'} = 'picaxml';
       $attrs{'_max_results'} = 3;
       
       my $sruBooks = Catmandu::Importer::SRU->new(%attrs)
-        or die "Abfrage über ".$attrs{'base'}." fehlgeschlagen!\n";
+        or $logger->logdie("Abfrage über ".$attrs{'base'}." fehlgeschlagen!");
       eval{
+        $logger->info("Got additional results for package from GVK!");
         while (my $titleRecord = $sruBooks->next){
           $currentTitle++;
-          if(pica_value($titleRecord, '006Z0')){
-            print STDOUT "Verarbeite Titel ".($currentTitle);
-            print STDOUT " von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '006Z0').")\n";
-          }else{
-            print STDOUT "Verarbeite Titel ".($currentTitle);
-            print STDOUT " von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '003@0').")\n";
-          }
+        if(pica_value($titleRecord, '006Z0')){
+          $logger->info("Verarbeite Titel ".($currentTitle)." von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '006Z0').")");
+        }else{
+          $logger->info("Verarbeite Titel ".($currentTitle)." von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '003@0').")");
+        }
 
-          my ($tipps, $titleStats, $titleWarnings) = processTitle($titleRecord, $pkgType, %packageHeader);
+          my ($tipps, $titleStats, $titleWarnings) = processTitle($titleRecord, $pkgType, "gvk", %packageHeader);
           
           my @tipps = @{$tipps};
           my %titleStats = %{$titleStats};
@@ -1394,7 +1424,7 @@ sub processPackage {
         }
         1;
       } or do {
-        say "SRU error for ".$packageInfo{'sigel'}.":";
+        $logger->error("SRU error for ".$packageInfo{'sigel'}.":");
         say $@;
         
         $package{'tipps'} = [];
@@ -1407,7 +1437,7 @@ sub processPackage {
     
     $attrs{'base'} = 'http://sru.gbv.de/natliz';
     $attrs{'query'} = $qryString;
-    $attrs{'recordSchema'} = 'picaxml';
+    $attrs{'recordSchema'} = 'picatitle';
     $attrs{'parser'} = 'picaxml';
     $attrs{'_max_results'} = 5;
     
@@ -1417,20 +1447,18 @@ sub processPackage {
       $attrs{'query'} = $qryString;
     
       my $sruTitles = Catmandu::Importer::SRU->new(%attrs)
-        or die "Abfrage über ".$attrs{'base'}." fehlgeschlagen!\n";
+        or $logger->logdie("Abfrage über ".$attrs{'base'}." fehlgeschlagen!");
         
       eval {   
         while (my $titleRecord = $sruTitles->next){
           $currentTitle++;
           if(pica_value($titleRecord, '006Z0')){
-            print STDOUT "Verarbeite Titel ".($currentTitle);
-            print STDOUT " von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '006Z0').")\n";
+            $logger->info("Verarbeite Titel ".($currentTitle)." von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '006Z0').")");
           }else{
-            print STDOUT "Verarbeite Titel ".($currentTitle);
-            print STDOUT " von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '003@0').")\n";
+            $logger->info("Verarbeite Titel ".($currentTitle)." von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '003@0').")");
           }
           
-          my ($tipps, $titleStats, $titleWarnings) = processTitle($titleRecord, $pkgType, %packageHeader);
+          my ($tipps, $titleStats, $titleWarnings) = processTitle($titleRecord, $pkgType, "natliz", %packageHeader);
 
           my @tipps = @{$tipps};
           my %titleStats = %{$titleStats};
@@ -1457,7 +1485,7 @@ sub processPackage {
         }
         1;
       } or do {
-        say "SRU error for ".$packageInfo{'sigel'}.":";
+        $logger->error("SRU error for ".$packageInfo{'sigel'}.":");
         say $@;
         
         $package{'tipps'} = [];
@@ -1471,20 +1499,18 @@ sub processPackage {
       $attrs{'query'} = $qryString;
     
       my $sruTitles = Catmandu::Importer::SRU->new(%attrs)
-        or die "Abfrage über ".$attrs{'base'}." fehlgeschlagen!\n";
+        or $logger->logdie("Abfrage über ".$attrs{'base'}." fehlgeschlagen!");
 
       eval {  
         while (my $titleRecord = $sruTitles->next){
           $currentTitle++;
           if(pica_value($titleRecord, '006Z0')){
-            print STDOUT "Verarbeite Titel ".($currentTitle);
-            print STDOUT " von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '006Z0').")\n";
+            $logger->info("Verarbeite Titel ".($currentTitle)." von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '006Z0').")");
           }else{
-            print STDOUT "Verarbeite Titel ".($currentTitle);
-            print STDOUT " von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '003@0').")\n";
+            $logger->info("Verarbeite Titel ".($currentTitle)." von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '003@0').")");
           }
           
-          my ($tipps, $titleStats, $titleWarnings) = processTitle($titleRecord, $pkgType, %packageHeader);
+          my ($tipps, $titleStats, $titleWarnings) = processTitle($titleRecord, $pkgType, "natliz", %packageHeader);
 
           my @tipps = @{$tipps};
           my %titleStats = %{$titleStats};
@@ -1510,7 +1536,7 @@ sub processPackage {
         }
         1;
       } or do {
-        say "SRU error for ".$packageInfo{'sigel'}.":";
+        $logger->error("SRU error for ".$packageInfo{'sigel'}.":");
         say $@;
         
         $package{'tipps'} = [];
@@ -1520,22 +1546,20 @@ sub processPackage {
     }elsif($requestedType eq 'all'){
       
       my $sruBooks = Catmandu::Importer::SRU->new(%attrs)
-        or die "Abfrage über ".$attrs{'base'}." fehlgeschlagen!\n";
+        or $logger->logdie("Abfrage über ".$attrs{'base'}." fehlgeschlagen!");
         
-      say STDOUT "SRU-Antwort für Monographien erhalten!";
+      $logger->info("SRU-Antwort für Monographien erhalten!");
       
       eval{
         while (my $titleRecord = $sruBooks->next){
           $currentTitle++;
           if(pica_value($titleRecord, '006Z0')){
-            print STDOUT "Verarbeite Titel ".($currentTitle);
-            print STDOUT " von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '006Z0').")\n";
+            $logger->info("Verarbeite Titel ".($currentTitle)." von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '006Z0').")");
           }else{
-            print STDOUT "Verarbeite Titel ".($currentTitle);
-            print STDOUT " von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '003@0').")\n";
+            $logger->info("Verarbeite Titel ".($currentTitle)." von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '003@0').")");
           }
           
-          my ($btipps, $btitleStats, $btitleWarnings) = processTitle($titleRecord, $pkgType, %packageHeader);
+          my ($btipps, $btitleStats, $btitleWarnings) = processTitle($titleRecord, $pkgType, "natliz", %packageHeader);
 
           my @btipps = @{$btipps};
           my %btitleStats = %{$btitleStats};
@@ -1561,7 +1585,7 @@ sub processPackage {
         }
         1;
       } or do {
-        say "SRU error for ".$packageInfo{'sigel'}.":";
+        $logger->error("SRU error for ".$packageInfo{'sigel'}.":");
         say $@;
         
         $package{'tipps'} = [];
@@ -1576,27 +1600,25 @@ sub processPackage {
 
       $attrs{'base'} = 'http://sru.gbv.de/zdbdb';
       $attrs{'query'} = $qryString;
-      $attrs{'recordSchema'} = 'picaxml';
+      $attrs{'recordSchema'} = 'picatitle';
       $attrs{'parser'} = 'picaxml';
       $attrs{'_max_results'} = 3;
         
       my $sruJournals = Catmandu::Importer::SRU->new(%attrs)
-        or die "Abfrage über ".$attrs{'base'}." fehlgeschlagen!\n";
+        or $logger->logdie("Abfrage über ".$attrs{'base'}." fehlgeschlagen!");
         
-      say STDOUT "SRU-Antwort für Journals erhalten!";
+      $logger->info("SRU-Antwort für Journals erhalten!");
       
       eval{
         while (my $titleRecord = $sruJournals->next){
           $currentTitle++;
           if(pica_value($titleRecord, '006Z0')){
-            print STDOUT "Verarbeite Titel ".($currentTitle);
-            print STDOUT " von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '006Z0').")\n";
+            $logger->info("Verarbeite Titel ".($currentTitle)." von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '006Z0').")");
           }else{
-            print STDOUT "Verarbeite Titel ".($currentTitle);
-            print STDOUT " von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '003@0').")\n";
+            $logger->info("Verarbeite Titel ".($currentTitle)." von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '003@0').")");
           }
           
-          my ($jtipps, $jtitleStats, $jtitleWarnings) = processTitle($titleRecord, $pkgType, %packageHeader);
+          my ($jtipps, $jtitleStats, $jtitleWarnings) = processTitle($titleRecord, $pkgType, %packageHeader, "natliz");
           my @jtipps = @{$jtipps};
           my %jtitleStats = %{$jtitleStats};
           my %jtitleWarnings = %{$jtitleWarnings};
@@ -1621,7 +1643,7 @@ sub processPackage {
         }
         1;
       } or do {
-        say "SRU error for ".$packageInfo{'sigel'}.":";
+        $logger->error("SRU error for ".$packageInfo{'sigel'}.":");
         say $@;
         
         $package{'tipps'} = [];
@@ -1632,19 +1654,17 @@ sub processPackage {
       $attrs{'query'} = 'pica.xpr='.$packageInfo{'sigel'};
         
       my $sruDatabases = Catmandu::Importer::SRU->new(%attrs)
-        or die "Abfrage über ".$attrs{'base'}." fehlgeschlagen!\n";
+        or $logger->logdie("Abfrage über ".$attrs{'base'}." fehlgeschlagen!");
         
-      say STDOUT "SRU-Antwort für Datenbanken erhalten!";
+      $logger->info("SRU-Antwort für Datenbanken erhalten!");
       
       eval{
         while (my $titleRecord = $sruDatabases->next){
           $currentTitle++;
           if(pica_value($titleRecord, '006Z0')){
-            print STDOUT "Verarbeite Titel ".($currentTitle);
-            print STDOUT " von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '006Z0').")\n";
+            $logger->info("Verarbeite Titel ".($currentTitle)." von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '006Z0').")");
           }else{
-            print STDOUT "Verarbeite Titel ".($currentTitle);
-            print STDOUT " von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '003@0').")\n";
+            $logger->info("Verarbeite Titel ".($currentTitle)." von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '003@0').")");
           }
         
           my ($dtipps, $dtitleStats, $dtitleWarnings) = processTitle($titleRecord, $pkgType, %packageHeader);
@@ -1673,7 +1693,7 @@ sub processPackage {
         }
         1;
       } or do {
-        say "SRU error for ".$packageInfo{'sigel'}.":";
+        $logger->error("SRU error for ".$packageInfo{'sigel'}.":");
         say $@;
         
         $package{'tipps'} = [];
@@ -1682,13 +1702,13 @@ sub processPackage {
     }
   }
   return \%package, \%pkgStats, \%packageWarnings;
-  say "Finished processing $currentTitle Titles of package ".$packageInfo{'sigel'};
+  $logger->info("Finished processing $currentTitle Titles of package ".$packageInfo{'sigel'});
 }
 
     ################ TITLEINSTANCE ################
 
 sub processTitle {
-  my ($titleRecord, $pkgType, %pkgInfo) = @_;
+  my ($titleRecord, $pkgType, $activeSource, %pkgInfo) = @_;
   my $materialType = pica_value($titleRecord, '002@0');
   my $typeChar = substr($materialType, 1, 1);
   my $isJournal = any {$_ eq $typeChar} ("b", "d");
@@ -1719,7 +1739,7 @@ sub processTitle {
     $gokbType = "Monograph";
     $gokbMedium = "Book";
   }else{
-    say "Kann Materialtyp für $ppn nicht bestimmen...";
+    $logger->error("Kann Materialtyp für $ppn nicht bestimmen...");
     return \@tipps, \%titleStats, \%titleWarnings;
   }
 
@@ -1728,17 +1748,17 @@ sub processTitle {
   $titleInfo{'identifiers'} = [];
 
   ## PPN
-  if($endpoint eq "gvk" && $pkgType eq "NL"){
+  if($activeSource eq "gvk"){
     push @{ $titleInfo{'identifiers'} } , {
       'type' => "gvk_ppn",
       'value' => $ppn
     };
-  }elsif( $endpoint eq "zdb" || ($endpoint eq "gvk" && $pkgType eq "AL") ){
+  }elsif($activeSource eq "zdb"){
     push @{ $titleInfo{'identifiers'} } , {
       'type' => "zdb_ppn",
       'value' => $ppn
     };
-  }elsif($endpoint eq "natliz"){
+  }elsif($activeSource eq "natliz"){
     push @{ $titleInfo{'identifiers'} } , {
       'type' => "natliz_ppn",
       'value' => $ppn
@@ -1749,7 +1769,7 @@ sub processTitle {
 
   my $doi;
 
-  if(($endpoint eq "gvk" && $pkgType eq "NL") || $endpoint eq "natliz"){
+  if($activeSource eq "gvk" || $activeSource eq "natliz"){
     $doi = pica_value($titleRecord, '004V0');
   }else{
     $doi = pica_value($titleRecord, '004P0');
@@ -1784,11 +1804,10 @@ sub processTitle {
         };
       }else{
         $id = $ppn;
-        say "Konnte ZDB-ID in Titel $ppn nicht validieren!";
+        $logger->warn("Konnte ZDB-ID in Titel $ppn nicht validieren!");
       }
     }else{
-      print "Titel mit ppn $ppn";
-      print " hat keine ZDB-ID! Überspringe Titel..\n";
+      $logger->warn("Titel mit ppn $ppn hat keine ZDB-ID! Überspringe Titel..");
 
       push @{ $titleWarnings{'all'} }, {
           '006Z0' => 'Keine ZDB-ID angegeben!'
@@ -1835,7 +1854,7 @@ sub processTitle {
                 'comment' => 'ISSN konnte nicht validiert werden.'
               };
             }elsif($globalIDs{$id} && none {$_ eq $eissn} @globalIssns){
-              say "eISSN $eissn kommt in bereits erschlossenem Titel $id nicht vor!";
+              $logger->warn("eISSN $eissn kommt in bereits erschlossenem Titel $id nicht vor!");
 
               push @{ $titleWarnings{'all'} }, {
                 '005A0' => $eissn,
@@ -1961,7 +1980,7 @@ sub processTitle {
               $isbn = $isbnValue[$subfPos+1];
               $isbn =~ s/-\s//g;
             }else{
-              say "Mehrere ISBNs in einem PICA-Feld!";
+              $logger->error("Mehrere ISBNs in einem PICA-Feld!");
             }
           }
           if($subField eq 'f' && scalar $isbnValue >= $subfPos+1){
@@ -1978,7 +1997,7 @@ sub processTitle {
       }
     }
   }else{
-    say "Kann Materialtyp für $ppn nicht bestimmen...";
+    $logger->error("Kann Materialtyp für $ppn nicht bestimmen...");
     return \@tipps, \%titleStats, \%titleWarnings;
   }
   $titleWarnings{'id'} = $id;
@@ -2008,8 +2027,7 @@ sub processTitle {
   # (shouldn't be necessary since it should be included in the search query)
 
   if(($requestedType eq "journal" && !$isJournal) || ($requestedType eq "book" && $isJournal)){
-    print "Überspringe Titel ".pica_value($titleRecord, '021Aa');
-    print ", Materialcode: $materialType\n";
+    $logger->warn("Überspringe Titel ".pica_value($titleRecord, '021Aa').", Materialcode: $materialType");
 
     return \@tipps, \%titleStats, \%titleWarnings;
   }
@@ -2021,7 +2039,7 @@ sub processTitle {
 
     if($titleField =~ /@/){
       $titleField =~ s/@//;
-      say STDOUT "Removed \@ from Title!";
+      $logger->debug("Removed \@ from Title!");
     }
     $titleInfo{'name'} = $titleField;
     
@@ -2038,7 +2056,7 @@ sub processTitle {
     }
     
   }else{
-    say "Keinen Titel für ".$ppn." erkannt, überspringe Titel!";
+    $logger->info("Keinen Titel für ".$ppn." erkannt, überspringe Titel!");
 
     push @{ $titleWarnings{'all'} }, {
         '021Aa' => pica_value($titleRecord, '021Aa'),
@@ -2218,9 +2236,9 @@ sub processTitle {
   push(@possiblePubs, @altPubs);
   my @gndPubs;
   
-  if($endpoint eq "gvk" && $pkgType eq "NL" ){
+  if($activeSource eq "gvk"){
     @gndPubs = @{ pica_fields($titleRecord, '029G') };
-  }elsif($endpoint eq "zdb" || $pkgType eq "AL"){
+  }elsif($activeSource eq "zdb"){
     @gndPubs = @{ pica_fields($titleRecord, '029A') };
   }
   
@@ -2254,12 +2272,12 @@ sub processTitle {
               '033(A/B)' => \@pub,
               'comment' => "Mehrere Verlage in einem PICA-Feld!"
             };
-            if($endpoint eq "gvk" && $pkgType eq "NL"){
+            if($activeSource eq "gvk"){
               push @{ $titleWarnings{'gvk'} }, {
                 '033(A/B)' => \@pub,
                 'comment' => "Mehrere Verlage in einem PICA-Feld!"
               };
-            }elsif($endpoint eq "zdb" || $pkgType eq "AL"){
+            }elsif($activeSource eq "zdb"){
               push @{ $titleWarnings{'zdb'} }, {
                 '033(A/B)' => \@pub,
                 'comment' => "Mehrere Verlage in einem PICA-Feld!"
@@ -2268,7 +2286,7 @@ sub processTitle {
           }
           $preCorrectedPub = $pub[$subfPos+1];
           $tempPub = $pub[$subfPos+1];
-          say STDOUT "Verlagsangabe: $tempPub";
+          $logger->debug("Verlagsangabe: $tempPub");
         }
         if($subField eq 'h'){
 
@@ -2476,9 +2494,9 @@ sub processTitle {
         $subfPos++;
       }
       if($isParent == 1){
-        say "$id - Parent: $pubName, Child: $branch";
+        $logger->debug("$id - Parent: $pubName, Child: $branch");
 
-        if($endpoint eq 'zdb'){
+        if($activeSource eq 'zdb'){
           push @{ $titleWarnings{'all'} }, {
             '029A' => \@pub,
             'comment' => "GND-Org ist nicht eigenständig."
@@ -2606,7 +2624,7 @@ sub processTitle {
     );
 
     foreach my $subField (@relTitle){
-      if($endpoint eq "gvk" && $pkgType eq "NL"){
+      if($activeSource eq "gvk"){
         if($subField eq 'c'){
 
           $relationType = $relTitle[$subfPos+1];
@@ -2680,7 +2698,7 @@ sub processTitle {
             }
           }
         }
-      }elsif($endpoint eq "zdb" || $pkgType eq "AL"){
+      }elsif($activeSource eq "zdb"){
         if($subField eq 'b'){
           $relationType = $relTitle[$subfPos+1];
         }
@@ -2739,11 +2757,11 @@ sub processTitle {
         $titleStats{'possibleRelations'} = 1;
       }
 
-      say STDOUT "Found possible relation $relatedID";
+      $logger->debug("Found possible relation $relatedID");
 
       my %relAttrs;
 
-      if($endpoint eq "gvk" && $pkgType eq "NL"){
+      if($activeSource eq "gvk"){
         my $relQryString = 'pica.zdb='.$relatedID;
 
         if($requestedType eq "journal"){
@@ -2753,27 +2771,27 @@ sub processTitle {
         %relAttrs = (
           base => 'http://sru.gbv.de/gvk',
           query => $relQryString,
-          recordSchema => 'picaxml',
+          recordSchema => 'picatitle',
           parser => 'picaxml',
           _max_results => 1
         );
-      }elsif($endpoint eq "zdb" || $pkgType eq "AL"){
+      }elsif($activeSource eq "zdb"){
         my $relQryString = 'pica.yyy='.$relatedID;
 
         %relAttrs = (
           base => 'http://sru.gbv.de/zdbdb',
           query => $relQryString,
-          recordSchema => 'picaxml',
+          recordSchema => 'picatitle',
           parser => 'picaxml',
           _max_results => 1
         );
-      }elsif($endpoint eq "natliz"){
+      }elsif($activeSource eq "natliz"){
         my $relQryString = 'pica.zdb='.$relatedID;
 
         %relAttrs = (
           base => 'http://sru.gbv.de/natlizzss',
           query => $relQryString,
-          recordSchema => 'picaxml',
+          recordSchema => 'picatitle',
           parser => 'picaxml',
           _max_results => 1
         );
@@ -2782,7 +2800,7 @@ sub processTitle {
 
       eval{
         my $sruRel = Catmandu::Importer::SRU->new(%relAttrs)
-          or warn "Abfrage über ".$relAttrs{'base'}." fehlgeschlagen!\n";
+          or $logger->warn("Abfrage über ".$relAttrs{'base'}." fehlgeschlagen!");
 
         $relRecord = $sruRel->first();
       }; warn $@ if $@;
@@ -2790,7 +2808,7 @@ sub processTitle {
       if($relRecord && ref($relRecord) eq 'HASH'){
         $relPPN = pica_value($relRecord, '003@0');
 
-        if($endpoint eq "gvk" && $pkgType eq "NL"){
+        if($activeSource eq "gvk"){
           if(pica_value($relRecord, '008E')){
             my @relISIL = pica_values($relRecord, '008E');
 
@@ -2804,7 +2822,7 @@ sub processTitle {
             'type' => "gvk_ppn",
             'value' => $relPPN
           };
-        }elsif($endpoint eq "zdb" || $pkgType eq "AL"){
+        }elsif($activeSource eq "zdb"){
           if(pica_value($relRecord, '017B')){
             my @relISIL = pica_values($relRecord, '017B');
 
@@ -2827,7 +2845,7 @@ sub processTitle {
             my $rSubfPos = 0;
 
             foreach my $subField (@rt){
-              if($endpoint eq "gvk" && $pkgType eq "NL"){
+              if($activeSource eq "gvk"){
                 if($subField eq 'ZDB' && $rt[$rSubfPos+1] eq '6'){
                   my $rID = formatZdbId($rt[$rSubfPos+2]);
 
@@ -2835,7 +2853,7 @@ sub processTitle {
                     $isDirectRelation = 1;
                   }
                 }
-              }elsif($endpoint eq "zdb" || $pkgType eq "AL"){
+              }elsif($activeSource eq "zdb"){
                 if($subField eq '0'){
                   my $rID = formatZdbId($rt[$rSubfPos+1]);
 
@@ -2863,7 +2881,7 @@ sub processTitle {
 
           push @{ $relObj{'identifiers'} }, { 'type' => "zdb", 'value' => $relatedID };
 
-          if(($endpoint eq "gvk" && $pkgType eq "NL") || $endpoint eq "natliz"){
+          if($activeSource eq "gvk" || $activeSource eq "natliz"){
             if(pica_value($relRecord, '004V0')){
               push @{ $relObj{'identifiers'} }, { 'type' => "doi", 'value' => pica_value($relRecord, '004V0') };
             }
@@ -2922,7 +2940,7 @@ sub processTitle {
           @connectedIDs = @{ $globalIDs{$relatedID}{'connected'} };
         }
       }else{
-        say STDOUT "did not find related record!";
+        $logger->debug("did not find related record!");
 
         push @{ $titleWarnings{'all'} }, {
           '039E' => $relatedID,
@@ -2935,7 +2953,7 @@ sub processTitle {
       }
 
       if($relRecord && $isDirectRelation == 0){
-        say STDOUT "no connected relation!";
+        $logger->debug("no connected relation!");
 
         push @{ $titleWarnings{'all'} }, {
           '039E' => $relatedID,
@@ -2953,7 +2971,7 @@ sub processTitle {
         }else{
           $titleStats{'nonNlRelation'} = 1;
         }
-        say STDOUT "Related title not in known packages: $relatedID!";
+        $logger->debug("Related title not in known packages: $relatedID!");
 
         unless(any {$_ eq $relatedID} @unknownRelIds){
           push @unknownRelIds, $relatedID;
@@ -2966,8 +2984,8 @@ sub processTitle {
       && $isDirectRelation == 1
       && $relIsNl == 1
     ){
-      say STDOUT "Trying to add relation to $relatedID";
-      say STDOUT "RelType: $relationType";
+      $logger->debug("Trying to add relation to $relatedID");
+      $logger->debug("RelType: $relationType");
 
       my @precedingTypes = ('f','Vorg.','Darin aufgeg.','Hervorgeg. aus');
       my @procedingTypes = ('s','Nachf.','Forts.','Aufgeg. in','Fortgesetzt durch');
@@ -2981,7 +2999,7 @@ sub processTitle {
                 'identifiers' => $titleInfo{'identifiers'}
             }]
         };
-        say STDOUT "Added relation!";
+        $logger->debug("Added relation!");
         
         if($titleStats{'usefulRelated'}){
           $titleStats{'usefulRelated'}++;
@@ -2997,14 +3015,14 @@ sub processTitle {
                 'identifiers' => $titleInfo{'identifiers'}
             }]
         };
-        say STDOUT "Added relation!";
+        $logger->debug("Added relation!");
         if($titleStats{'usefulRelated'}){
           $titleStats{'usefulRelated'}++;
         }else{
           $titleStats{'usefulRelated'} = 1;
         }
       }elsif($rStartYear){
-        say STDOUT "Trying to add by dates!";
+        $logger->debug("Trying to add by dates!");
         if($rEndYear){
           if($rEndYear < $start_year){ # Vorg.
             push @{ $titleInfo{'historyEvents'} } , {
@@ -3068,7 +3086,7 @@ sub processTitle {
               }
             }
           }
-          say STDOUT "Added relation!";
+          $logger->debug("Added relation!");
         }else{
           if($end_year != 0){ # Nachf.
             push @{ $titleInfo{'historyEvents'} } , {
@@ -3096,17 +3114,17 @@ sub processTitle {
                   }]
               };
             }
-            say STDOUT "Added relation!";
+            $logger->debug("Added relation!");
           }else{
-            say "Konnte Verknüpfungstyp in $id nicht identifizieren:";
-            say "Titel: $start_year-".($end_year != 0 ? $end_year : "");
-            say "Verknüpft: ".($rStartYear ? $rStartYear : "")."-".($rEndYear ? $rEndYear : "");
+            $logger->warn("Konnte Verknüpfungstyp in $id nicht identifizieren:");
+            $logger->warn("Titel: $start_year-".($end_year != 0 ? $end_year : ""));
+            $logger->warn("Verknüpft: ".($rStartYear ? $rStartYear : "")."-".($rEndYear ? $rEndYear : ""));
           }
         }
       }else{
-        say "Konnte Verknüpfungstyp in $id nicht identifizieren:";
-        say "Titel $id: $start_year-".($end_year != 0 ? $end_year : "");
-        say "Verknüpft $relatedID: ".($rStartYear ? $rStartYear : "")."-".($rEndYear ? $rEndYear : "");
+        $logger->warn("Konnte Verknüpfungstyp in $id nicht identifizieren:");
+        $logger->warn("Titel $id: $start_year-".($end_year != 0 ? $end_year : ""));
+        $logger->warn("Verknüpft $relatedID: ".($rStartYear ? $rStartYear : "")."-".($rEndYear ? $rEndYear : ""));
       }
     }
   }
@@ -3114,43 +3132,56 @@ sub processTitle {
   # -------------------- TIPPS (Online-Ressourcen) --------------------
 
   my @onlineSources;
+  my $packagePlatformName = $pkgInfo{'nominalPlatform'}{'name'};
+  my $packagePlatformUrl = $pkgInfo{'nominalPlatform'}{'primaryUrl'};
+  my $provider = $pkgInfo{'nominalProvider'};
 
-  if($endpoint eq "gvk" && $pkgType eq "NL"){
-    @onlineSources = @{ pica_fields($titleRecord, '009P[05]') };
-  }elsif($endpoint eq "zdb" || ($endpoint eq "gvk" && $pkgType eq "AL")){
-    @onlineSources = @{ pica_fields($titleRecord, '009Q') };
-  }elsif($endpoint eq "natliz"){
-    say "Checking TIPPs for $id";
-    if(pica_value($titleRecord, '009Q')){
-      say "Gefunden: 009P!";
-      push @onlineSources, @{ pica_fields($titleRecord, '009Q') };
-    }
+  if($activeSource eq "gvk"){
     if(pica_value($titleRecord, '009P[03]')){
-      say "Gefunden: 009P[03]!";
       push @onlineSources, @{pica_fields($titleRecord, '009P[03]')};
     }
     if(pica_value($titleRecord, '009P[05]')){
-      say "Gefunden: 009P[05]!";
+      push @onlineSources, @{pica_fields($titleRecord, '009P[05]')};
+    }
+  }elsif($activeSource eq "zdb"){
+    @onlineSources = @{ pica_fields($titleRecord, '009Q') };
+  }elsif($activeSource eq "natliz"){
+    if(pica_value($titleRecord, '009Q')){
+      push @onlineSources, @{ pica_fields($titleRecord, '009Q') };
+    }
+    if(pica_value($titleRecord, '009P[03]')){
+      push @onlineSources, @{pica_fields($titleRecord, '009P[03]')};
+    }
+    if(pica_value($titleRecord, '009P[05]')){
       push @onlineSources, @{pica_fields($titleRecord, '009P[05]')};
     }
   }
 
   my $numSources = scalar @onlineSources;
   my @skippedTipps = ();
+  my @validTipps = ();
 
   foreach my $eSource (@onlineSources){
 
-    my ($tipp, $tippWarnings, $tippStats, $tippComment) = processTipp($eSource, $pkgType, $gokbType, %titleInfo);
+    my ($tipp, $tippWarnings, $tippStats, $tippComments) = processTipp($eSource, $pkgType, $gokbType, $activeSource, %titleInfo);
     
     my %tipp = %{$tipp};
     my %tippWarnings = %{$tippWarnings};
     my %tippStats = %{$tippStats};
+    my %tippComments = %{$tippComments};
+
+    if($activeSource eq "gvk" && pica_value($titleRecord, '008Ep')) {
+      $tipp{'status'} = "Retired";
+    }
     
+    $tipp{'licence'} = $tippComments{'public'} ? $tippComments{'public'} : $tippComments{'licence'};
+    $tipp{'type'} = $tippComments{'internal'};
+
     if(!$tipp{'action'}){
-      push @tipps, \%tipp;
+      push @validTipps, \%tipp;
     }elsif ($tipp{'action'} eq "skipped") {
       delete $tipp{'action'};
-      $tipp{'comment'} = $tippComment;
+
       push @skippedTipps, \%tipp;
     }
     
@@ -3171,77 +3202,182 @@ sub processTitle {
   }
  # End TIPP
 
-  # -------------------- NO viable URL found ... --------------------
+  # -------------------- Select URLs ... --------------------
 
-  if(scalar @tipps == 0){
-    # Look in skipped TIPPs
+  $logger->info("Relevante TIPPs: ".scalar @validTipps." - Sonstige: ".scalar @skippedTipps);
 
-    if(scalar @skippedTipps > 0){
-      foreach my $skTipp (@skippedTipps) {
-        my %skTipp = %{$skTipp};
-        say STDOUT "Looking for OA-URL";
-        if ( scalar @tipps == 0 && ($skTipp{'comment'} eq "LF" || $skTipp{'comment'} eq "KF" || $skTipp{'comment'} eq "KW") ) {
-          delete $skTipp{'comment'};
-          push @tipps, \%skTipp;
+  if(scalar @validTipps > 0){
 
-          if($titleStats{'numUsedOA'}){
-            $titleStats{'numUsedOA'}++;
-          }else{
-            $titleStats{'numUsedOA'} = 1;
-          }
+    my %remainingValidTipps;
+
+    foreach my $validTipp (@validTipps) {
+      my %vTipp = %{$validTipp};
+      my $tippType = $vTipp{'type'};
+      my $ppBase;
+
+      if($packagePlatformUrl) {
+        eval {
+          $ppBase = URI->new( $packagePlatformUrl );
+          $ppBase = $ppBase->authority();
         }
       }
-      if ( scalar @tipps == 0) {
-        say STDOUT "Looking for Publisher-URL";
-        foreach my $skTipp (@skippedTipps) {
-          my %skTipp = %{$skTipp};
+      $logger->debug("Base is: $ppBase");
 
-          if ($skTipp{'comment'} eq "H" || $skTipp{'comment'} =~ "H;" || $skTipp{'comment'} eq "Verlag" || $skTipp{'comment'} =~ "Verlag;") {
-            push @tipps, \%skTipp;
-            if ( scalar @tipps > 0 ) {
-              say "Got more than one Publisher-URL..";
+      if($ppBase) {
+        my @ppBaseArray = split(/\./, $ppBase);
+        $logger->debug("Base Array length is ".scalar @ppBaseArray);
+
+        if($ppBase =~ $vTipp{'platform'}{'name'} || $vTipp{'platform'}{'name'} =~ $ppBase){
+          $logger->info("URL mit Paketbasis $ppBase gefunden (TIPP-Plattform ist ".$vTipp{'platform'}{'name'}.").");
+          push @tipps, \%vTipp;
+        }elsif(scalar @ppBaseArray > 2) {
+          splice @ppBaseArray, 0,1;
+          $ppBase = join('.', @ppBaseArray);
+          $logger->debug("NO Base URL match! Trying $ppBase ..");
+
+          if($vTipp{'platform'}{'name'} =~ $ppBase) {
+            $logger->info("Found plattform by shortened URL!");
+            push @tipps, \%vTipp;
+          }else{
+            $logger->info("Could not match $ppBase and ".$vTipp{'platform'}{'name'});
+
+            if (ref($remainingValidTipps{$tippType}) eq 'ARRAY'){
+              push @{$remainingValidTipps{$tippType}}, \%vTipp;
+            }else{
+              $remainingValidTipps{$tippType} = [\%vTipp];
             }
+          }
+        }else{
+          $logger->info("Could not match $ppBase with ".$vTipp{'platform'}{'name'});
+
+          if (ref($remainingValidTipps{$tippType}) eq 'ARRAY'){
+            push @{$remainingValidTipps{$tippType}}, \%vTipp;
+          }else{
+            $remainingValidTipps{$tippType} = [\%vTipp];
           }
         }
       }
     }
-    if (scalar @tipps == 0){
 
-      # Add placeholder TIPP
-
-      if($titleStats{'numNoUrl'}){
-        $titleStats{'numNoUrl'}++;
-      }else{
-        $titleStats{'numNoUrl'} = 1;
+    if(scalar @tipps == 0) {
+      if($remainingValidTipps{'H'}){
+        $logger->info("Found other valid publisher URL (type 'H')");
+        foreach my $selectedValidTipp (@{$remainingValidTipps{'H'}}) {
+          my %svTipp = %{$selectedValidTipp};
+          push @tipps, \%svTipp;
+        }
+      }elsif($remainingValidTipps{'D'}){
+        $logger->info("Found valid digitisation URL(s) (type 'D')");
+        foreach my $selectedValidTipp (@{$remainingValidTipps{'D'}}) {
+          my %svTipp = %{$selectedValidTipp};
+          push @tipps, \%svTipp;
+        }
+      }elsif($remainingValidTipps{'A'}){
+        $logger->info("Found other valid agent URL(s) (type 'A')");
+        foreach my $selectedValidTipp (@{$remainingValidTipps{'A'}}) {
+          my %svTipp = %{$selectedValidTipp};
+          push @tipps, \%svTipp;
+        }
+      }elsif($remainingValidTipps{'C'}){
+        $logger->info("Found other valid archival URL(s) (type 'C')");
+        foreach my $selectedValidTipp (@{$remainingValidTipps{'C'}}) {
+          my %svTipp = %{$selectedValidTipp};
+          push @tipps, \%svTipp;
+        }
+      }elsif($remainingValidTipps{'L'}){
+        $logger->info("Found other valid long-time archival URL(s) (type 'L')");
+        foreach my $selectedValidTipp (@{$remainingValidTipps{'L'}}) {
+          my %svTipp = %{$selectedValidTipp};
+          push @tipps, \%svTipp;
+        }
+      }elsif($remainingValidTipps{'G'}){
+        $logger->info("Found other valid aggregator URL(s) (type 'G')");
+        foreach my $selectedValidTipp (@{$remainingValidTipps{'G'}}) {
+          my %svTipp = %{$selectedValidTipp};
+          push @tipps, \%svTipp;
+        }
       }
-      say "No valid URL found, adding placeholder ($id)!";
+    }
+  }
 
-      my $packagePlatformName = $pkgInfo{'nominalPlatform'}{'name'};
-      my $packagePlatformUrl = $pkgInfo{'nominalPlatform'}{'primaryUrl'};
-      my $provider = $pkgInfo{'nominalProvider'};
+  if(scalar @tipps == 0 && scalar @skippedTipps > 0){
 
-      push @{ $titleWarnings{'all'} }, {
-          '009P0'=> "ZDB-URLs != GVK-URLs?"
-      };
+    foreach my $skTipp (@skippedTipps) {
+      my %skTipp = %{$skTipp};
+      $logger->info("Looking for OA-URL");
+      if ( scalar @tipps == 0 && ($skTipp{'licence'} eq "LF" || $skTipp{'licence'} eq "KF" || $skTipp{'licence'} eq "KW") ) {
+        delete $skTipp{'comment'};
+        push @tipps, \%skTipp;
 
-      push @{ $titleWarnings{'gvk'} }, {
-          '009P0'=> "ZDB-URLs != GVK-URLs?"
-      };
+        if($titleStats{'numUsedOA'}){
+          $titleStats{'numUsedOA'}++;
+        }else{
+          $titleStats{'numUsedOA'} = 1;
+        }
+      }
+    }
+    if ( scalar @tipps == 0) {
+      $logger->info("Looking for other Publisher-URLs");
+      foreach my $skTipp (@skippedTipps) {
+        my %skTipp = %{$skTipp};
 
-      if($packagePlatformName){
-        push @tipps, {
-          'medium' => "Electronic",
-          'platform' => {
-            'name' => $packagePlatformName ? $packagePlatformName : "",
-            'primaryUrl' => $packagePlatformUrl
-          },
-          'url' => $packagePlatformUrl,
-          'status' => "Current",
-          'title' => {
-            'identifiers' => \@{$titleInfo{'identifiers'}},
-            'name' => $titleInfo{'name'},
-            'type' => "Serial"
+        if ($skTipp{'type'} eq "H") {
+          push @tipps, \%skTipp;
+          if ( scalar @tipps > 0 ) {
+            $logger->info("Got more than one Publisher-URL..");
           }
+        }
+      }
+    }
+  }
+
+  if (scalar @tipps == 0){
+
+    # Add placeholder TIPP
+
+    if($titleStats{'numNoUrl'}){
+      $titleStats{'numNoUrl'}++;
+    }else{
+      $titleStats{'numNoUrl'} = 1;
+    }
+    $logger->warn("No valid URL found, adding placeholder ($id)!");
+
+    push @{ $titleWarnings{'all'} }, {
+        '009P0'=> "Keine relevanten URLs identifiziert!"
+    };
+
+    push @{ $titleWarnings{'gvk'} }, {
+        '009P0'=> "Keine relevanten URLs identifiziert!"
+    };
+
+    if($packagePlatformName){
+      push @tipps, {
+        'medium' => "Electronic",
+        'platform' => {
+          'name' => $packagePlatformName ? $packagePlatformName : "",
+          'primaryUrl' => $packagePlatformUrl
+        },
+        'url' => $packagePlatformUrl,
+        'status' => "Current",
+        'title' => {
+          'identifiers' => \@{$titleInfo{'identifiers'}},
+          'name' => $titleInfo{'name'},
+          'type' => "Serial"
+        }
+      }
+    }else{
+      push @tipps, {
+        'medium' => "Electronic",
+        'platform' => {
+          'name' => $packagePlatformUrl,
+          'primaryUrl' => ""
+        },
+        'url' => $packagePlatformUrl,
+        'status' => "Current",
+        'title' => {
+          'identifiers' => \@{$titleInfo{'identifiers'}},
+          'name' => $titleInfo{'name'},
+          'type' => "Serial"
         }
       }
     }
@@ -3283,7 +3419,7 @@ sub processTitle {
     };
     push @allTitles , \%titleInfo;
   }else{
-    say "ID ".$id." ist bereits in der Titelliste vorhanden!";
+    $logger->warn("ID ".$id." ist bereits in der Titelliste vorhanden!");
 
     if($titleStats{'duplicateZDBids'}){
       $titleStats{'duplicateZDBids'}++;
@@ -3301,7 +3437,7 @@ sub processTitle {
 
 sub processTipp {
   my %tipp;
-  my ($eSource, $pkgType, $gokbType, %titleInfo) = @_;
+  my ($eSource, $pkgType, $gokbType, $activeSource, %titleInfo) = @_;
   my @eSource = @{$eSource};
   my %tippStats;
   
@@ -3316,12 +3452,39 @@ sub processTipp {
   my $internalComments = "";
   my $isNL = 0;
   my $toSkip;
-  my %validComments = (
-    'gvk' => ['Verlag','Digitalisierung','Agentur','Archivierung','Langzeitarchivierung','Aggregator'],
-    'zdb' => ['H;','D;','A;','C;','L;','G;']
+  my %validInternalComments = (
+    'H' => {
+      'gvk' => 'Verlag',
+      'zdb' => 'H;'
+    },
+    'D' => {
+      'gvk' => 'Digitalisierung',
+      'zdb' => 'D;'
+    },
+    'A' => {
+      'gvk' => 'Agentur',
+      'zdb' => 'A;'
+    },
+    'C' => {
+      'gvk' => 'Archivierung',
+      'zdb' => 'C;'
+    },
+    'L' => {
+      'gvk' => 'Langzeitarchivierung',
+      'zdb' => 'L;'
+    },
+    'G' => {
+      'gvk' => 'Aggregator',
+      'zdb' => 'G;'
+    }
   );
-  my $publicComments = "";
-  my $licenceComment = "";
+
+  my %tippComments = (
+    'public' => "",
+    'internal' => "",
+    'licence' => ""
+  );
+
   my $subfPos = 0;
 
 
@@ -3354,68 +3517,67 @@ sub processTipp {
       $internalComments = $eSource[$subfPos+1];
 
     }elsif($subField eq 'z'){
-      $publicComments = $eSource[$subfPos+1];
-      say STDOUT "Found public comment $publicComments ..";
+      $tippComments{'public'} = $eSource[$subfPos+1];
+      $logger->debug("Found public comment ".$tippComments{'public'}."..");
 
     }elsif($subField eq '4'){
-      $licenceComment = $eSource[$subfPos+1];
+      $tippComments{'licence'} = $eSource[$subfPos+1];
     }
     $subfPos++;
   }
 
   if(!$sourceURL || length $sourceURL > 255 || $sourceURL eq ""){
-    say "Skipping TIPP with overlong URL!";
+    $logger->error("Skipping TIPP with no or overlong URL!");
     $tipp{'action'} = "error";
     return (\%tipp, \%tippWarnings, \%tippStats);
   }else{
-    say STDOUT "Considering URL: $sourceURL";
+    $logger->debug("Considering URL: $sourceURL");
   }
   
   my $internalCommentIsValid = 0;
   
-  if($endpoint eq "natliz" && $gokbType ne "Serial"){
+  if($activeSource eq "natliz" && $gokbType ne "Serial"){
     if($pkgType eq "NL"){
-      $publicComments = "NL";
-    }else{
-      $publicComments = $licenceComment;
+      $tippComments{'public'} = "NL";
     }
   }
 
-  if($endpoint eq "gvk" && $pkgType eq "NL"){
-    foreach my $vCom ( @{ $validComments{'gvk'} } ){
-      if( $internalComments =~ $vCom ){
+  if($activeSource eq "gvk" && $pkgType eq "NL"){
+    while (my ($uType, $vCom) = each %validInternalComments ){
+      my %vCom = %{$vCom};
+
+      if( $internalComments =~ $vCom{'gvk'} ){
         $internalCommentIsValid = 1;
+        $tippComments{'internal'} = $uType;
       }
-    }
-    if(!$publicComments && $licenceComment){
-      $publicComments = $licenceComment;
     }
     
     if(!$internalComments){
       $internalCommentIsValid = 1;
     }
     
-  }elsif($endpoint eq "zdb" || ($endpoint eq "gvk" && $pkgType eq "AL") || ($endpoint eq "natliz" && $gokbType eq "Serial")){
-    foreach my $vCom ( @{ $validComments{'zdb'} } ){
-      my $corCom = $vCom =~ s/;//g;
+  }elsif($activeSource eq "zdb"){
+    while (my ($uType, $vCom) = each %validInternalComments ){
+      my %vCom = %{$vCom};
 
-      if( $internalComments =~ $vCom || $internalComments eq $corCom ){
+      if( $internalComments =~ $vCom{'zdb'} || $internalComments eq $uType ){
+        $tippComments{'internal'} = $uType;
         $internalCommentIsValid = 1;
       }
     }
-  }elsif($endpoint eq "natliz" && $gokbType ne "Serial"){
+  }elsif($activeSource eq "natliz"){
     $internalCommentIsValid = 1;
   }
 
   if($pkgType eq "NL"){
-    if($publicComments ne "Deutschlandweit zugänglich" && $publicComments ne "NL"){
+    if($tippComments{'public'} ne "Deutschlandweit zugänglich" && $tippComments{'public'} ne "NL"){
       if($tippStats{'otherURLs'}){
         $tippStats{'otherURLs'}++;
       }else{
         $tippStats{'otherURLs'} = 1;
       }
       
-      say STDOUT "Skipping NL-TIPP.. wrong Public Comment: $publicComments, (internal=$internalComments)";
+      $logger->debug("Skipping NL-TIPP.. wrong Public Comment: ",$tippComments{'public'},", (internal=$internalComments)");
       $tipp{'action'} = "skipped";
     }else{
       if($tippStats{'nlURLs'}){
@@ -3423,18 +3585,18 @@ sub processTipp {
       }else{
         $tippStats{'nlURLs'} = 1;
       }
-      say STDOUT "Using NL-TIPP.. Public Comment: $publicComments, (internal=$internalComments)";
+      $logger->debug("Using NL-TIPP.. Public Comment: ",$tippComments{'public'},", (internal=$internalComments)");
       $isNL = 1;
     }
 
 
     if($internalCommentIsValid != 1){
-      say STDOUT "Skipping NL-TIPP.. wrong Internal Comment: $internalComments";
+      $logger->debug("Skipping NL-TIPP.. wrong Internal Comment: $internalComments");
       $tipp{'action'} = "skipped";
     }
   }
   else {
-    if($internalCommentIsValid == 1 && $publicComments ne "Deutschlandweit zugänglich" && $publicComments ne "NL"){
+    if($internalCommentIsValid == 1 && $tippComments{'public'} ne "Deutschlandweit zugänglich" && $tippComments{'public'} ne "NL"){
     
       if($tippStats{'otherURLs'}){
         $tippStats{'otherURLs'}++;
@@ -3442,17 +3604,15 @@ sub processTipp {
         $tippStats{'otherURLs'} = 1;
       }
 
-      if($publicComments eq "LF") {
-        $tipp{'paymentType'} = "OA"
+      if($tippComments{'public'} eq "LF") {
+        $tipp{'paymentType'} = "OA";
       }
 
     }else{
-      say STDOUT "Skipping TIPP .. wrong Type or source: $internalComments, $publicComments";
+      $logger->debug("Skipping TIPP .. wrong Type or source: $internalComments, ",$tippComments{'public'});
       $tipp{'action'} = "skipped";
     }
   }
-
-  my $tippComment = $publicComments ? $publicComments : $internalComments;
 
   $tipp{'status'} = "Current";
   $tipp{'medium'} = "Electronic";
@@ -3487,9 +3647,9 @@ sub processTipp {
         'comment' => 'Aus der URL konnte kein Host ermittelt werden.'
       };
       
-      say "Could not extract host of URL $url";
+      $logger->error("Could not extract host of URL $url");
       $tipp{'action'} = "error";
-      return (\%tipp, \%tippWarnings, \%tippStats, $tippComment);
+      return (\%tipp, \%tippWarnings, \%tippStats, \%tippComments);
     }else{
       $hostUrl = "$scheme://$host";
 
@@ -3521,7 +3681,7 @@ sub processTipp {
 #       }
     }
   }elsif (!$tipp{'action'}) {
-    say "Looks like a wrong URL!";
+    $logger->warn("Looks like a wrong URL!");
     
     if($tippStats{'brokenURL'}){
       $tippStats{'brokenURL'}++;
@@ -3539,10 +3699,10 @@ sub processTipp {
       'comment' => 'URL-Schema konnte nicht ermittelt werden!'
     };
     
-    say "Could not extract scheme of URL $url";
+    $logger->error("Could not extract scheme of URL $url");
     $tipp{'action'} = "error";
   
-    return (\%tipp, \%tippWarnings, \%tippStats, $tippComment);
+    return (\%tipp, \%tippWarnings, \%tippStats, \%tippComments);
   }
 
   $tipp{'platform'} = {
@@ -3644,7 +3804,7 @@ sub processTipp {
     'type' => $gokbType
   };
 
-  return (\%tipp, \%tippWarnings, \%tippStats, $tippComment);
+  return (\%tipp, \%tippWarnings, \%tippStats, \%tippComments);
 }
 
 # Submit package/title JSON to GOKb-API
@@ -3672,15 +3832,15 @@ sub postData {
 
     if($resp->is_success){
       if($endPointType eq 'crossReferencePackage'){
-        say "Commit of package successful.";
-        say "HTTP POST message: ", $resp->message;
+        $logger->info("Commit of package successful.");
+        $logger->info("HTTP POST message: ", $resp->message);
       }
 
       return 0;
       
     }else{
-      say "HTTP POST error code: ", $resp->code;
-      say "HTTP POST error message: ", $resp->message;
+      $logger->info("HTTP POST error code: ".$resp->code);
+      $logger->info("HTTP POST error message: ".$resp->message);
       
       my %resp_content;
       
@@ -3690,18 +3850,18 @@ sub postData {
         
         foreach my $eMessage (@{$resp_content{'errors'}}) {
           my %eMessage = %{$eMessage};
-          say "Cause: ", $eMessage{'message'};
+          $logger->error("Cause: ", $eMessage{'message'});
         }
         1;
         
       } or do {
-        say "Could not determine cause of error!";
+        $logger->error("Could not determine cause of error!");
       };
       
       return $resp->code;
     }
   }else{
-    say "Wrong endpoint or no data!";
+    $logger->error("Wrong endpoint or no data!");
 
     return -1;
   }
@@ -3797,9 +3957,9 @@ sub matchExistingOrgs {
           }
         }
         if($publisherMatch) {
-          say "Matched GOKb Org $publisherMatch for given Org: $pubName";
+          $logger->debug("Matched GOKb Org $publisherMatch for given Org: $pubName");
         }else{
-          say "Could not find GOKb Org $pubName ..";
+          $logger->debug("Could not find GOKb Org $pubName ..");
         }
         
 
@@ -3809,14 +3969,14 @@ sub matchExistingOrgs {
 #         }
 
       }else{
-        say "Could not look up Org name in GOKb..";
-        say "HTTP GET error code: ", $resp->code;
-        say "HTTP GET error message: ", $resp->message;
-        say "Using ONLD.jsonld from now on..";
+        $logger->warn("Could not look up Org name in GOKb..");
+        $logger->warn("HTTP GET error code: ".$resp->code);
+        $logger->warn("HTTP GET error message: ".$resp->message);
+        $logger->warn("Using ONLD.jsonld from now on..");
         $matchOrgsByFile = 1;
       }
     }else{
-      say "Could not find any GOKb credentials.. matching by file.";
+      $logger->warn("Could not find any GOKb credentials.. matching by file.");
       $matchOrgsByFile = 1;
     }
   }
@@ -3936,19 +4096,18 @@ sub checkUrl {
       $redirectMech->get(URI->new_abs($location, $mech->base()));
       
       if ($redirectMech->status() >= 400) {
-        say "URL $url is not currently valid!";
+        $logger->warn("URL $url is not currently valid!");
         return;
       }else{
-        my $new_url =  $redirectMech->uri();
+        my $new_url = $redirectMech->uri();
         $new_url = $new_url->as_string();
-        say "URL $url redirected to $new_url";
         return $new_url;
       }
     }
   }elsif($status == 200){
     return $url;
   }else{
-    say "URL $url is not currently valid!";
+    $logger->error("URL $url is not currently valid!");
     return;
   }
 }
