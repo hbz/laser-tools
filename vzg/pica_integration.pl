@@ -17,7 +17,7 @@
 # --endpoint
 #  * ändert die Datenquelle für Titeldaten
 #  * weglassen für Standardbezug über VZG-SRU
-#  * Mögliche Werte: "zdb","natliz","gvk" (Standard)
+#  * Mögliche Werte: "zdb","natliz","gvk" (Standard), "gbvcat" (Zugriffsbeschränkt)
 # --post (URL)
 #  * überträgt die ausgewählten Pakete an eine GOKb-Instanz
 #  * folgt keine URL, wird die localhost Standard-Adresse verwendet
@@ -195,6 +195,7 @@ my $endpoint = "gvk";
 my $newOrgs = 0;
 my $localPkg = 0;
 my $customTarget;
+my $owner = "Master";
 
 my $argP = first_index { $_ eq '--packages' } @ARGV;
 my $argJ = first_index { $_ eq '--json' } @ARGV;
@@ -203,10 +204,15 @@ my $argEndpoint = first_index { $_ eq '--endpoint' } @ARGV;
 my $argNewOrgs = first_index { $_ eq '--new_orgs' } @ARGV;
 my $argType = first_index { $_ eq '--pub_type' } @ARGV;
 my $argLocal = first_index { $_ eq '--local_pkg' } @ARGV;
+my $argOwner = first_index { $_ eq '--pkg_owner' } @ARGV;
 
 if($ARGV[$argPost+1] && index($ARGV[$argPost+1], "http") == 0){
   $gokbCreds{'base'} = $ARGV[$argPost+1];
   $customTarget = 1;
+}
+
+if($argOwner >= 0 && $ARGV[$argOwner+1] && index($ARGV[$argOwner+1], "--") == 0){
+  $owner = $ARGV[$argOwner+1];
 }
 
 if( $argType >= 0) {
@@ -225,10 +231,10 @@ if($argLocal >= 0){
 }
 
 if($argEndpoint >= 0) {
-  if($ARGV[$argEndpoint+1] && any { $_ eq $ARGV[$argEndpoint+1] } ("zdb","natliz","gvk") ) {
+  if($ARGV[$argEndpoint+1] && any { $_ eq $ARGV[$argEndpoint+1] } ("zdb","natliz","gvk","gbvcat") ) {
     $endpoint = $ARGV[$argEndpoint+1];
   }else{
-    $logger->logdie("Ungültiger Endpunkt! Möglich sind 'zdb', 'natliz' und 'gvk'(Standard)");
+    $logger->logdie("Ungültiger Endpunkt! Möglich sind 'zdb', 'natliz', 'gbvcat'(Zugriffsbeschränkt) und 'gvk'(Standard)");
   }
 }
 
@@ -376,7 +382,7 @@ sub getZdbName {
 
   my %attrs = (
       base => 'http://sru.gbv.de/isil',
-      query => 'pica.isi='.$sig,
+      query => 'pica.isl='.$sig,
       recordSchema => 'picaxml',
       parser => 'picaxml'
   );
@@ -390,12 +396,19 @@ sub getZdbName {
       if(pica_value($packageInstance, '035Ea') ne 'I'
         && pica_value($packageInstance, '008Hd') eq $sig
       ){
+        $logger->debug("Valides Paket gefunden.");
+
         my $messyName = pica_value($packageInstance, '029Aa');
         my $bracketPos = index($messyName, '[');
 
+        $logger->debug("Paketname: $messyName");
+
         if($bracketPos > 0){
           $pkgInfos{'name'} = substr($messyName, 0, $bracketPos-1);
+        }else {
+          $pkgInfos{'name'} = $messyName;
         }
+
         $pkgInfos{'name'} =~ s/^\s+|\s+$//g;
 
         $pkgInfos{'provider'} = pica_value($packageInstance, '035Pg')
@@ -537,7 +550,7 @@ sub getSeals {
         if ($pkgInfos{'type'} =~ /Allianz-Lizenz/ ) {
           $lType = "AL";
         }else{
-          $lType = $pkgInfos{'type'};
+          $lType = $owner;
         }
       }
 
@@ -667,12 +680,13 @@ sub getSeals {
       $pkg{'orgStats'}{'numCms'} = scalar @{ $pkg{'cmsOrgs'} };
 
       my %zdbAttrs = (
-          base => 'http://sru.gbv.de/zdbdb',
-          query => 'pica.isl='.$pkgSigel,
-          recordSchema => 'picatitle',
+          base => 'http://services.dnb.de/sru/zdb',
+          query => 'pica.isil='.$pkgSigel,
+          recordSchema => 'PicaPlus-xml',
           _max_results => 1,
-          parser => 'picaxml'
+          parser => 'ppxml'
       );
+
       my $titleImporter = Catmandu::Importer::SRU->new(%zdbAttrs)
         or $logger->logdie("Abfrage über ".$zdbAttrs{'base'}." fehlgeschlagen!");
       my $zdbTitle = $titleImporter->first();
@@ -705,7 +719,7 @@ sub getSeals {
   return 0;
 }
 
-# Create packages, tipps and titles as GOKb-JSON (and upload if requested)
+# Create packages, tipps and titles as GOKb-JSON (and trigger upload if requested)
 
 my %globalIDs;
 my @unknownRelIds;
@@ -755,7 +769,7 @@ sub createJSON {
         }elsif($pkgInfos{'type'} eq "Nationallizenz"){
           $lType = "NL";
         }else{
-          $lType = $pkgInfos{'type'};
+          $lType = $owner;
         }
         $logger->info("Verarbeite Paket vom Typ ".$pkgInfos{'type'}."");
       }else{
@@ -1210,13 +1224,13 @@ sub processPackage {
 
   $logger->info("Package Type is: $pkgType, endpoint is $endpoint");
 
-  if($endpoint eq 'gvk' && $pkgType eq "NL"){
+  if($endpoint eq 'gvk'){
     %pkgSource = (
       url => "http://sru.gbv.de/gvk",
       name => "GVK-SRU",
       normname => "GVK_SRU"
     );
-  }elsif($endpoint eq 'zdb' || ($endpoint eq 'gvk' && $pkgType eq "AL" )){
+  }elsif($endpoint eq 'zdb'){
     %pkgSource = (
       url => "http://www.zeitschriftendatenbank.de",
       name => "ZDB - Zeitschriftendatenbank"
@@ -1257,7 +1271,7 @@ sub processPackage {
   my %attrs;
   my %packageHeader = %{$package{'packageHeader'}};
   
-  if($endpoint eq "gvk" && $pkgType eq "NL"){
+  if($endpoint eq "gvk" || $endpoint eq "gbvcat"){
     my $qryString = 'pica.xpr='.$packageInfo{'sigel'};
 
     if($requestedType eq "journal"){
@@ -1270,7 +1284,11 @@ sub processPackage {
 
     $qryString .= ' sortBy year/sort.ascending';
     
-    $attrs{'base'} = 'http://sru.gbv.de/gvk';
+    if($endpoint eq "gvk") {
+      $attrs{'base'} = 'http://sru.gbv.de/gvk';
+    } else {
+      $attrs{'base'} = 'http://sru.gbv.de/gbvcat';
+    }
     $attrs{'query'} = $qryString;
     $attrs{'recordSchema'} = 'picatitle';
     $attrs{'parser'} = 'picaxml';
@@ -1288,7 +1306,7 @@ sub processPackage {
           $logger->info("Verarbeite Titel ".($currentTitle)." von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '003@0').")");
         }
         
-        my ($tipps, $titleStats, $titleWarnings) = processTitle($titleRecord, $pkgType, "gvk", %packageHeader);
+        my ($tipps, $titleStats, $titleWarnings) = processTitle($titleRecord, $pkgType, $endpoint, %packageHeader);
         
         my @tipps = @{$tipps};
         my %titleStats = %{$titleStats};
@@ -1321,14 +1339,14 @@ sub processPackage {
       return \%package, \%pkgStats, \%packageWarnings;
     };
     
-  }elsif($endpoint eq "zdb" || ($endpoint eq "gvk" && $pkgType eq "AL" )){
-    my $qryString = 'pica.isl='.$packageInfo{'sigel'};
+  }elsif($endpoint eq "zdb"){
+    my $qryString = 'dnb.isil='.$packageInfo{'sigel'};
     
-    $attrs{'base'} = 'http://sru.gbv.de/zdbdb';
+    $attrs{'base'} = 'http://services.dnb.de/sru/zdb';
     $attrs{'query'} = $qryString;
-    $attrs{'recordSchema'} = 'picatitle';
-    $attrs{'parser'} = 'picaxml';
-    $attrs{'_max_results'} = 3;
+    $attrs{'recordSchema'} = 'PicaPlus-xml';
+    $attrs{'parser'} = 'ppxml';
+    $attrs{'_max_results'} = 1;
     
     my $sruTitles = Catmandu::Importer::SRU->new(%attrs)
       or $logger->logdie("Abfrage über ".$attrs{'base'}." fehlgeschlagen!");
@@ -1596,13 +1614,13 @@ sub processPackage {
 #       $qryString .= " and (pica.mak=Ob* or pica.mak=Od*)";
 #       $attrs{'query'} = $qryString;
 
-      my $qryString = 'pica.isl='.$packageInfo{'sigel'};
+      my $qryString = 'pica.isil='.$packageInfo{'sigel'};
 
-      $attrs{'base'} = 'http://sru.gbv.de/zdbdb';
+      $attrs{'base'} = 'http://services.dnb.de/sru/zdb';
       $attrs{'query'} = $qryString;
-      $attrs{'recordSchema'} = 'picatitle';
-      $attrs{'parser'} = 'picaxml';
-      $attrs{'_max_results'} = 3;
+      $attrs{'recordSchema'} = 'PicaPlus-xml';
+      $attrs{'parser'} = 'ppxml';
+      $attrs{'_max_results'} = 1;
         
       my $sruJournals = Catmandu::Importer::SRU->new(%attrs)
         or $logger->logdie("Abfrage über ".$attrs{'base'}." fehlgeschlagen!");
@@ -1763,13 +1781,18 @@ sub processTitle {
       'type' => "natliz_ppn",
       'value' => $ppn
     };
+  }elsif($activeSource eq "gbvcat"){
+    push @{ $titleInfo{'identifiers'} } , {
+      'type' => "zdb_ppn",
+      'value' => $ppn
+    };
   }
 
   ## DOI
 
   my $doi;
 
-  if($activeSource eq "gvk" || $activeSource eq "natliz"){
+  if($activeSource eq "gvk" || $activeSource eq "natliz" || $activeSource eq "gbvcat"){
     $doi = pica_value($titleRecord, '004V0');
   }else{
     $doi = pica_value($titleRecord, '004P0');
@@ -2236,7 +2259,7 @@ sub processTitle {
   push(@possiblePubs, @altPubs);
   my @gndPubs;
   
-  if($activeSource eq "gvk"){
+  if($activeSource eq "gvk" || $activeSource eq "gbvcat"){
     @gndPubs = @{ pica_fields($titleRecord, '029G') };
   }elsif($activeSource eq "zdb"){
     @gndPubs = @{ pica_fields($titleRecord, '029A') };
@@ -2272,7 +2295,7 @@ sub processTitle {
               '033(A/B)' => \@pub,
               'comment' => "Mehrere Verlage in einem PICA-Feld!"
             };
-            if($activeSource eq "gvk"){
+            if($activeSource eq "gvk" || $activeSource eq "gbvcat"){
               push @{ $titleWarnings{'gvk'} }, {
                 '033(A/B)' => \@pub,
                 'comment' => "Mehrere Verlage in einem PICA-Feld!"
@@ -2608,6 +2631,7 @@ sub processTitle {
   foreach my $relatedTitle (@relatedTitles){
     my @relTitle = @{ $relatedTitle };
     my $relationType;
+    my $altRelationType;
     my $relName;
     my $relatedID;
     my @connectedIDs;
@@ -2624,8 +2648,12 @@ sub processTitle {
     );
 
     foreach my $subField (@relTitle){
-      if($activeSource eq "gvk"){
+      if($activeSource eq "gvk" || $activeSource eq "gbvcat"){
         if($subField eq 'c'){
+
+          $altRelationType = $relTitle[$subfPos+1];
+
+        }elsif($subField eq 'b'){
 
           $relationType = $relTitle[$subfPos+1];
 
@@ -2757,11 +2785,15 @@ sub processTitle {
         $titleStats{'possibleRelations'} = 1;
       }
 
+      if(!$relationType && $altRelationType) {
+        $relationType = $altRelationType;
+      }
+
       $logger->debug("Found possible relation $relatedID");
 
       my %relAttrs;
 
-      if($activeSource eq "gvk"){
+      if($activeSource eq "gvk" || $activeSource eq "gbvcat"){
         my $relQryString = 'pica.zdb='.$relatedID;
 
         if($requestedType eq "journal"){
@@ -2773,16 +2805,21 @@ sub processTitle {
           query => $relQryString,
           recordSchema => 'picatitle',
           parser => 'picaxml',
-          _max_results => 1
+          _max_results => 5
         );
+
+        if($activeSource eq "gbvcat") {
+          $relAttrs{'base'} = 'http://sru.gbv.de/gbvcat'
+        }
+
       }elsif($activeSource eq "zdb"){
-        my $relQryString = 'pica.yyy='.$relatedID;
+        my $relQryString = 'dnb.zdbid='.$relatedID;
 
         %relAttrs = (
-          base => 'http://sru.gbv.de/zdbdb',
+          base => 'http://services.dnb.de/sru/zdb',
           query => $relQryString,
-          recordSchema => 'picatitle',
-          parser => 'picaxml',
+          recordSchema => 'PicaPlus-xml',
+          parser => 'ppxml',
           _max_results => 1
         );
       }elsif($activeSource eq "natliz"){
@@ -2808,7 +2845,7 @@ sub processTitle {
       if($relRecord && ref($relRecord) eq 'HASH'){
         $relPPN = pica_value($relRecord, '003@0');
 
-        if($activeSource eq "gvk"){
+        if($activeSource eq "gvk" || $activeSource eq "gbvcat"){
           if(pica_value($relRecord, '008E')){
             my @relISIL = pica_values($relRecord, '008E');
 
@@ -2845,7 +2882,7 @@ sub processTitle {
             my $rSubfPos = 0;
 
             foreach my $subField (@rt){
-              if($activeSource eq "gvk"){
+              if($activeSource eq "gvk" || $activeSource eq "gbvcat"){
                 if($subField eq 'ZDB' && $rt[$rSubfPos+1] eq '6'){
                   my $rID = formatZdbId($rt[$rSubfPos+2]);
 
@@ -2881,7 +2918,7 @@ sub processTitle {
 
           push @{ $relObj{'identifiers'} }, { 'type' => "zdb", 'value' => $relatedID };
 
-          if($activeSource eq "gvk" || $activeSource eq "natliz"){
+          if($activeSource eq "gvk" || $activeSource eq "natliz" || $activeSource eq "gbvcat"){
             if(pica_value($relRecord, '004V0')){
               push @{ $relObj{'identifiers'} }, { 'type' => "doi", 'value' => pica_value($relRecord, '004V0') };
             }
@@ -3136,7 +3173,7 @@ sub processTitle {
   my $packagePlatformUrl = $pkgInfo{'nominalPlatform'}{'primaryUrl'};
   my $provider = $pkgInfo{'nominalProvider'};
 
-  if($activeSource eq "gvk"){
+  if($activeSource eq "gvk" || $activeSource eq "gbvcat"){
     if(pica_value($titleRecord, '009P[03]')){
       push @onlineSources, @{pica_fields($titleRecord, '009P[03]')};
     }
@@ -3170,7 +3207,7 @@ sub processTitle {
     my %tippStats = %{$tippStats};
     my %tippComments = %{$tippComments};
 
-    if($activeSource eq "gvk" && pica_value($titleRecord, '008Ep')) {
+    if( ($activeSource eq "gvk" || $activeSource eq "gbvcat") && pica_value($titleRecord, '008Ep')) {
       $tipp{'status'} = "Retired";
     }
     
@@ -3229,6 +3266,9 @@ sub processTitle {
 
         if($ppBase =~ $vTipp{'platform'}{'name'} || $vTipp{'platform'}{'name'} =~ $ppBase){
           $logger->info("URL mit Paketbasis $ppBase gefunden (TIPP-Plattform ist ".$vTipp{'platform'}{'name'}.").");
+          delete $vTipp{'comment'};
+          delete $vTipp{'licence'};
+          delete $vTipp{'type'};
           push @tipps, \%vTipp;
         }elsif(scalar @ppBaseArray > 2) {
           splice @ppBaseArray, 0,1;
@@ -3237,6 +3277,9 @@ sub processTitle {
 
           if($vTipp{'platform'}{'name'} =~ $ppBase) {
             $logger->info("Found plattform by shortened URL!");
+            delete $vTipp{'comment'};
+            delete $vTipp{'licence'};
+            delete $vTipp{'type'};
             push @tipps, \%vTipp;
           }else{
             $logger->info("Could not match $ppBase and ".$vTipp{'platform'}{'name'});
@@ -3264,36 +3307,54 @@ sub processTitle {
         $logger->info("Found other valid publisher URL (type 'H')");
         foreach my $selectedValidTipp (@{$remainingValidTipps{'H'}}) {
           my %svTipp = %{$selectedValidTipp};
+          delete $svTipp{'comment'};
+          delete $svTipp{'licence'};
+          delete $svTipp{'type'};
           push @tipps, \%svTipp;
         }
       }elsif($remainingValidTipps{'D'}){
         $logger->info("Found valid digitisation URL(s) (type 'D')");
         foreach my $selectedValidTipp (@{$remainingValidTipps{'D'}}) {
           my %svTipp = %{$selectedValidTipp};
+          delete $svTipp{'comment'};
+          delete $svTipp{'licence'};
+          delete $svTipp{'type'};
           push @tipps, \%svTipp;
         }
       }elsif($remainingValidTipps{'A'}){
         $logger->info("Found other valid agent URL(s) (type 'A')");
         foreach my $selectedValidTipp (@{$remainingValidTipps{'A'}}) {
           my %svTipp = %{$selectedValidTipp};
+          delete $svTipp{'comment'};
+          delete $svTipp{'licence'};
+          delete $svTipp{'type'};
           push @tipps, \%svTipp;
         }
       }elsif($remainingValidTipps{'C'}){
         $logger->info("Found other valid archival URL(s) (type 'C')");
         foreach my $selectedValidTipp (@{$remainingValidTipps{'C'}}) {
           my %svTipp = %{$selectedValidTipp};
+          delete $svTipp{'comment'};
+          delete $svTipp{'licence'};
+          delete $svTipp{'type'};
           push @tipps, \%svTipp;
         }
       }elsif($remainingValidTipps{'L'}){
         $logger->info("Found other valid long-time archival URL(s) (type 'L')");
         foreach my $selectedValidTipp (@{$remainingValidTipps{'L'}}) {
           my %svTipp = %{$selectedValidTipp};
+          delete $svTipp{'comment'};
+          delete $svTipp{'licence'};
+          delete $svTipp{'type'};
           push @tipps, \%svTipp;
         }
       }elsif($remainingValidTipps{'G'}){
         $logger->info("Found other valid aggregator URL(s) (type 'G')");
         foreach my $selectedValidTipp (@{$remainingValidTipps{'G'}}) {
           my %svTipp = %{$selectedValidTipp};
+          delete $svTipp{'comment'};
+          delete $svTipp{'licence'};
+          delete $svTipp{'type'};
           push @tipps, \%svTipp;
         }
       }
@@ -3307,6 +3368,8 @@ sub processTitle {
       $logger->info("Looking for OA-URL");
       if ( scalar @tipps == 0 && ($skTipp{'licence'} eq "LF" || $skTipp{'licence'} eq "KF" || $skTipp{'licence'} eq "KW") ) {
         delete $skTipp{'comment'};
+        delete $skTipp{'licence'};
+        delete $skTipp{'type'};
         push @tipps, \%skTipp;
 
         if($titleStats{'numUsedOA'}){
@@ -3322,6 +3385,9 @@ sub processTitle {
         my %skTipp = %{$skTipp};
 
         if ($skTipp{'type'} eq "H") {
+          delete $skTipp{'comment'};
+          delete $skTipp{'licence'};
+          delete $skTipp{'type'};
           push @tipps, \%skTipp;
           if ( scalar @tipps > 0 ) {
             $logger->info("Got more than one Publisher-URL..");
@@ -3542,7 +3608,7 @@ sub processTipp {
     }
   }
 
-  if($activeSource eq "gvk" && $pkgType eq "NL"){
+  if( ($activeSource eq "gvk" || $activeSource eq "gbvcat") && $pkgType eq "NL"){
     while (my ($uType, $vCom) = each %validInternalComments ){
       my %vCom = %{$vCom};
 
@@ -3831,9 +3897,12 @@ sub postData {
     my $resp = $ua->request($req);
 
     if($resp->is_success){
+      my %resp_content = %{decode_json($resp->content)};
+
       if($endPointType eq 'crossReferencePackage'){
         $logger->info("Commit of package successful.");
-        $logger->info("HTTP POST message: ", $resp->message);
+        $logger->info("HTTP POST result: ", $resp_content{'result'});
+        $logger->info("HTTP POST message: ", $resp_content{'message'});
       }
 
       return 0;
