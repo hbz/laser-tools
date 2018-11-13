@@ -1446,6 +1446,8 @@ sub processPackage {
     }
       
   }elsif($endpoint eq "natliz"){
+
+    $logger->debug("Setting endpoint config..");
     my $qryString = 'pica.xpr='.$packageInfo{'sigel'};
     
     $attrs{'base'} = 'http://sru.gbv.de/natliz';
@@ -1456,8 +1458,10 @@ sub processPackage {
     
     if ($requestedType eq 'book'){
 
-      $qryString .= "and pica.mak=Oa*";
+      $qryString .= " and pica.mak=Oa*";
       $attrs{'query'} = $qryString;
+
+      $logger->debug("Suche mit query ".${qryString}."!");
     
       my $sruTitles = Catmandu::Importer::SRU->new(%attrs)
         or $logger->logdie("Abfrage über ".$attrs{'base'}." fehlgeschlagen!");
