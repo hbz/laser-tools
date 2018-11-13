@@ -4,7 +4,7 @@
 # Es werden (je nach Aufruf) mehrere Schritte durchlaufen:
 # 1. Import der Sigelinformationen aus dem Nationallizenzen-CMS
 # 2. Anreicherung der Paketinformationen mit Daten aus dem ZDB-Sigelverzeichnis
-# 3. Extrahieren von Titelinformationen über die SRU-Schnittstelle des GBV
+# 3. Extrahieren von Titelinformationen über eine PICA-XML SRU-Schnittstelle
 # 4. Upload der Paket- und Titeldaten in eine GOKb-Instanz
 #
 # Parameter:
@@ -2006,12 +2006,11 @@ sub processTitle {
           }
           $subfPos++;
         }
-        if($isbnType && $isbnType eq 'Online'){
-          push @{ $titleInfo{'identifiers'}} , {
-            'type' => "isbn",
-            'value' => $isbn
-          };
-        }
+
+        push @{ $titleInfo{'identifiers'}} , {
+          'type' => "isbn",
+          'value' => $isbn
+        };
       }
     }
   }else{
@@ -3200,13 +3199,17 @@ sub processTitle {
     my %tipp = %{$tipp};
     my %tippWarnings = %{$tippWarnings};
     my %tippStats = %{$tippStats};
-    my %tippComments = %{$tippComments};
+    my %tippComments = $tippComments ? %{$tippComments} : undef;
 
     if( ($activeSource eq "gvk" || $activeSource eq "gbvcat") && pica_value($titleRecord, '008Ep')) {
       $tipp{'status'} = "Retired";
     }
     
-    $tipp{'licence'} = $tippComments{'public'} ? $tippComments{'public'} : $tippComments{'licence'};
+    if(%tippComments) {
+      $tipp{'licence'} = $tippComments{'public'} ? $tippComments{'public'} : $tippComments{'licence'};
+    } else {
+      $tipp{'licence'} = 'unknown';
+    }
     $tipp{'type'} = $tippComments{'internal'};
 
     if(!$tipp{'action'}){
@@ -3379,7 +3382,7 @@ sub processTitle {
       foreach my $skTipp (@skippedTipps) {
         my %skTipp = %{$skTipp};
 
-        if ($skTipp{'type'} eq "H") {
+        if ($skTipp{'type'} eq "H" || $skTipp{'type'} eq "") {
           delete $skTipp{'comment'};
           delete $skTipp{'licence'};
           delete $skTipp{'type'};
@@ -3603,7 +3606,7 @@ sub processTipp {
     }
   }
 
-  if( ($activeSource eq "gvk" && $pkgType eq "NL") || $activeSource eq "gbvcat"){
+  if( $activeSource eq "gvk" || $activeSource eq "gbvcat" ){
     while (my ($uType, $vCom) = each %validInternalComments ){
       my %vCom = %{$vCom};
 
@@ -3881,7 +3884,7 @@ sub postData {
     my %decData = %{ $data };  
     my $ua = LWP::UserAgent->new;
 
-    $ua->timeout(1800);
+    $ua->timeout(7200);
 
     my $req = HTTP::Request->new(POST => $endPoint);
 
@@ -3895,16 +3898,22 @@ sub postData {
       my %resp_content = %{decode_json($resp->content)};
 
       if($endPointType eq 'crossReferencePackage'){
+
+        my $rspMsg = $resp_content{'message'} ? $resp_content{'message'} : "none";
+
         $logger->info("Commit of package successful.");
         $logger->info("HTTP POST result: ", $resp_content{'result'});
-        $logger->info("HTTP POST message: ", $resp_content{'message'});
+        $logger->info("HTTP POST message: ", $rspMsg);
       }
 
       return 0;
       
     }else{
-      $logger->info("HTTP POST error code: ".$resp->code);
-      $logger->info("HTTP POST error message: ".$resp->message);
+      $logger->error("HTTP POST error code: ".$resp->code);
+
+      if($resp->message){
+        $logger->error("HTTP POST error message: ".$resp->message);
+      }
       
       my %resp_content;
       
