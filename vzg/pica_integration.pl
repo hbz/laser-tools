@@ -2011,12 +2011,11 @@ sub processTitle {
           }
           $subfPos++;
         }
-        if($isbnType && $isbnType eq 'Online'){
-          push @{ $titleInfo{'identifiers'}} , {
-            'type' => "isbn",
-            'value' => $isbn
-          };
-        }
+
+        push @{ $titleInfo{'identifiers'}} , {
+          'type' => "isbn",
+          'value' => $isbn
+        };
       }
     }
   }else{
@@ -3612,7 +3611,7 @@ sub processTipp {
     }
   }
 
-  if( ($activeSource eq "gvk" || $activeSource eq "gbvcat") && $pkgType eq "NL"){
+  if( $activeSource eq "gvk" || $activeSource eq "gbvcat" ){
     while (my ($uType, $vCom) = each %validInternalComments ){
       my %vCom = %{$vCom};
 
@@ -3890,7 +3889,7 @@ sub postData {
     my %decData = %{ $data };  
     my $ua = LWP::UserAgent->new;
 
-    $ua->timeout(1800);
+    $ua->timeout(7200);
 
     my $req = HTTP::Request->new(POST => $endPoint);
 
