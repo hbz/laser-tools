@@ -98,23 +98,11 @@ my $filter;
 
 ### logging
 
-# my $logFnDate = strftime '%Y-%m-%d', localtime;
-# my $logFn = 'logs_'.$logFnDate.'.log';
-#
-# $logDir->mkpath( { verbose => 0 } );
-#
-# my $logFile = $logDir->file($logFn);
-#
-# $logFile->touch();
-#
-# my $out_logs = $logFile->opena();
-#
-# my $tee = new IO::Tee(\*STDOUT, $out_logs);
-#
-# *STDERR = *$tee{IO};
-#
-# select $tee;
+  if (-e $logDir && -d $logDir){
 
+  }else{
+    $logDir->mkpath( { verbose => 0 } );
+  }
 
   my $conf = q(
 
@@ -204,15 +192,15 @@ my $argEndpoint = first_index { $_ eq '--endpoint' } @ARGV;
 my $argNewOrgs = first_index { $_ eq '--new_orgs' } @ARGV;
 my $argType = first_index { $_ eq '--pub_type' } @ARGV;
 my $argLocal = first_index { $_ eq '--local_pkg' } @ARGV;
-my $argOwner = first_index { $_ eq '--pkg_owner' } @ARGV;
+my $argSuffix = first_index { $_ eq '--pkg_suffix' } @ARGV;
 
 if($ARGV[$argPost+1] && index($ARGV[$argPost+1], "http") == 0){
   $gokbCreds{'base'} = $ARGV[$argPost+1];
   $customTarget = 1;
 }
 
-if($argOwner >= 0 && $ARGV[$argOwner+1] && index($ARGV[$argOwner+1], "--") == 0){
-  $owner = $ARGV[$argOwner+1];
+if($argSuffix >= 0 && $ARGV[$argSuffix+1] && index($ARGV[$argSuffix+1], "--") == 0){
+  $owner = $ARGV[$argSuffix+1];
 }
 
 if( $argType >= 0) {
@@ -381,10 +369,10 @@ sub getZdbName {
   );
 
   my %attrs = (
-      base => 'http://sru.gbv.de/isil',
-      query => 'pica.isl='.$sig,
-      recordSchema => 'picaxml',
-      parser => 'picaxml'
+      base => 'http://services.dnb.de/sru/bib',
+      query => 'dnb.isil='.$sig,
+      recordSchema => 'PicaPlus-xml',
+      parser => 'ppxml'
   );
   my $importer = Catmandu::Importer::SRU->new(%attrs)
     or die " - Abfrage über ".$attrs{'base'}." fehlgeschlagen!\n";
@@ -633,10 +621,10 @@ sub getSeals {
             if($hasError == 0){
               if(!$knownIsils{$tempISIL}){
                 my %bibAttrs = (
-                    base => 'http://sru.gbv.de/isil',
-                    query => 'pica.isi='.$tempISIL,
-                    recordSchema => 'picaxml',
-                    parser => 'picaxml'
+                    base => 'http://services.dnb.de/sru/bib',
+                    query => 'dnb.isil='.$tempISIL,
+                    recordSchema => 'PicaPlus-xml',
+                    parser => 'ppxml'
                 );
                 $logger->info("Suche nach ISIL: $tempISIL!");
                 my $orgImporter = Catmandu::Importer::SRU->new(%bibAttrs)
@@ -681,7 +669,7 @@ sub getSeals {
 
       my %zdbAttrs = (
           base => 'http://services.dnb.de/sru/zdb',
-          query => 'pica.isil='.$pkgSigel,
+          query => 'dnb.isil='.$pkgSigel,
           recordSchema => 'PicaPlus-xml',
           _max_results => 1,
           parser => 'ppxml'
@@ -1241,7 +1229,13 @@ sub processPackage {
       name => "Natliz-SRU",
       normname => "Natliz_SRU"
     );
-  }
+  }elsif($endpoint eq 'gbvcat'){
+    %pkgSource = (
+      url => "http://sru.gbv.de/gbvcat",
+      name => "GBVCAT-SRU"
+    );
+  };
+
   my $pkgNoProv = "$pkgName: $pkgType";
 
   $package{'packageHeader'} = {
@@ -1259,7 +1253,7 @@ sub processPackage {
     global => "Consortium",
     listVerifier => "",
     userListVerifier => $userListVer,
-    nominalPlatform => \%pkgPlatform,
+    nominalPlatform => (%pkgPlatform) ? \%pkgPlatform : "",
     nominalProvider => $provider,
     listVerifiedDate => $listVerDate,
     source => \%pkgSource,
@@ -1289,6 +1283,7 @@ sub processPackage {
     } else {
       $attrs{'base'} = 'http://sru.gbv.de/gbvcat';
     }
+
     $attrs{'query'} = $qryString;
     $attrs{'recordSchema'} = 'picatitle';
     $attrs{'parser'} = 'picaxml';
@@ -1614,7 +1609,7 @@ sub processPackage {
 #       $qryString .= " and (pica.mak=Ob* or pica.mak=Od*)";
 #       $attrs{'query'} = $qryString;
 
-      my $qryString = 'pica.isil='.$packageInfo{'sigel'};
+      my $qryString = 'dnb.isil='.$packageInfo{'sigel'};
 
       $attrs{'base'} = 'http://services.dnb.de/sru/zdb';
       $attrs{'query'} = $qryString;
@@ -3428,7 +3423,7 @@ sub processTitle {
         'title' => {
           'identifiers' => \@{$titleInfo{'identifiers'}},
           'name' => $titleInfo{'name'},
-          'type' => "Serial"
+          'type' => $gokbType
         }
       }
     }else{
@@ -3443,7 +3438,7 @@ sub processTitle {
         'title' => {
           'identifiers' => \@{$titleInfo{'identifiers'}},
           'name' => $titleInfo{'name'},
-          'type' => "Serial"
+          'type' => $gokbType
         }
       }
     }
@@ -3608,7 +3603,7 @@ sub processTipp {
     }
   }
 
-  if( ($activeSource eq "gvk" || $activeSource eq "gbvcat") && $pkgType eq "NL"){
+  if( ($activeSource eq "gvk" && $pkgType eq "NL") || $activeSource eq "gbvcat"){
     while (my ($uType, $vCom) = each %validInternalComments ){
       my %vCom = %{$vCom};
 
