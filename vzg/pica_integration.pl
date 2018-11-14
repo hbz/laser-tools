@@ -98,11 +98,23 @@ my $filter;
 
 ### logging
 
-  if (-e $logDir && -d $logDir){
+# my $logFnDate = strftime '%Y-%m-%d', localtime;
+# my $logFn = 'logs_'.$logFnDate.'.log';
+#
+# $logDir->mkpath( { verbose => 0 } );
+#
+# my $logFile = $logDir->file($logFn);
+#
+# $logFile->touch();
+#
+# my $out_logs = $logFile->opena();
+#
+# my $tee = new IO::Tee(\*STDOUT, $out_logs);
+#
+# *STDERR = *$tee{IO};
+#
+# select $tee;
 
-  }else{
-    $logDir->mkpath( { verbose => 0 } );
-  }
 
   my $conf = q(
 
@@ -192,15 +204,15 @@ my $argEndpoint = first_index { $_ eq '--endpoint' } @ARGV;
 my $argNewOrgs = first_index { $_ eq '--new_orgs' } @ARGV;
 my $argType = first_index { $_ eq '--pub_type' } @ARGV;
 my $argLocal = first_index { $_ eq '--local_pkg' } @ARGV;
-my $argSuffix = first_index { $_ eq '--pkg_suffix' } @ARGV;
+my $argOwner = first_index { $_ eq '--pkg_owner' } @ARGV;
 
 if($ARGV[$argPost+1] && index($ARGV[$argPost+1], "http") == 0){
   $gokbCreds{'base'} = $ARGV[$argPost+1];
   $customTarget = 1;
 }
 
-if($argSuffix >= 0 && $ARGV[$argSuffix+1] && index($ARGV[$argSuffix+1], "--") == 0){
-  $owner = $ARGV[$argSuffix+1];
+if($argOwner >= 0 && $ARGV[$argOwner+1] && index($ARGV[$argOwner+1], "--") == 0){
+  $owner = $ARGV[$argOwner+1];
 }
 
 if( $argType >= 0) {
@@ -369,8 +381,8 @@ sub getZdbName {
   );
 
   my %attrs = (
-      base => 'http://services.dnb.de/sru/bib',
-      query => 'dnb.isil='.$sig,
+      base => 'https://services.dnb.de/sru/bib',
+      query => 'isl='.$sig,
       recordSchema => 'PicaPlus-xml',
       parser => 'ppxml'
   );
@@ -621,10 +633,10 @@ sub getSeals {
             if($hasError == 0){
               if(!$knownIsils{$tempISIL}){
                 my %bibAttrs = (
-                    base => 'http://services.dnb.de/sru/bib',
-                    query => 'dnb.isil='.$tempISIL,
-                    recordSchema => 'PicaPlus-xml',
-                    parser => 'ppxml'
+                    base => 'http://sru.gbv.de/isil',
+                    query => 'pica.isi='.$tempISIL,
+                    recordSchema => 'picaxml',
+                    parser => 'picaxml'
                 );
                 $logger->info("Suche nach ISIL: $tempISIL!");
                 my $orgImporter = Catmandu::Importer::SRU->new(%bibAttrs)
@@ -669,7 +681,7 @@ sub getSeals {
 
       my %zdbAttrs = (
           base => 'http://services.dnb.de/sru/zdb',
-          query => 'dnb.isil='.$pkgSigel,
+          query => 'pica.isil='.$pkgSigel,
           recordSchema => 'PicaPlus-xml',
           _max_results => 1,
           parser => 'ppxml'
@@ -792,6 +804,9 @@ sub createJSON {
   $warningDir->mkpath( { verbose => 0 } );
   $orgsDir->mkpath( { verbose => 0 } );
 
+  my $titlesFile = $titleDir->file("titles_".$filter."_".$endpoint.".json");
+  my $orgsFile = $orgsDir->file("gnd_orgs_".$endpoint.".json");
+
   # Warnings
 
   my %authorityNotes;
@@ -847,6 +862,7 @@ sub createJSON {
   my $startTime = time();
   my $packagesTotal = 0;
   my $skippedPackages = "";
+  my $skippedTitles = 0;
   my $noTipps = "";
 
   foreach my $sigel (keys %knownSelection){
@@ -867,6 +883,7 @@ sub createJSON {
       next;
     }
     my %package;
+    my @packageTitles;
     
     if($localPkg == 1){
       $logger->debug("Verwende lokale Dateien..");
@@ -885,14 +902,27 @@ sub createJSON {
         $noTipps .= "$sigel ";
         next;
       }
+
+      my $json_titles = do {
+        open(my $json_fh, '<' , $titlesFile)
+            or $logger->warn("Konnte \$tfileName\" nicht öffnen: $!\n");
+        local $/;
+        <$json_fh>
+      };
+
+      if($json_titles){
+        @packageTitles = @{decode_json($json_titles)}
+            or $logger->warn("Titel-JSON konnte nicht gelesen werden!\n");
+      }
       
     }else{
     
       my %currentPackageInfo = %{$knownSelection{$sigel}};
       
-      my ($package, $pkgStats, $pkgWarn) = processPackage(%currentPackageInfo);
+      my ($package, $pkgStats, $pkgWarn, $packageTitles) = processPackage(%currentPackageInfo);
 
       %package = %{$package};
+      @packageTitles = @{$packageTitles};
 
       if (scalar @{$package{'tipps'}} == 0){
         $logger->warn("Paket $sigel hat keine TIPPs und wird nicht angelegt!");
@@ -933,7 +963,29 @@ sub createJSON {
 
     if($postData == 1){
       sleep 10;
+
+      # Submit collected titles to GOKb
+
+      my $sumTitles = scalar @packageTitles;
+
+      $logger->info("Submitting $sumTitles titles to GOKb (".$gokbCreds{'base'}.")");
+
+      foreach my $title (@packageTitles){
+        my %curTitle = %{ $title };
+        my $postResult = postData('crossReferenceTitle', \%curTitle);
+
+        if($postResult != 0){
+          $logger->error("Could not upload Title! Errorcode $postResult");
+
+          $skippedTitles++;
+        }
+      }
+
+      sleep 2;
+
       $logger->info("Submitting Package $sigel to GOKb (".$gokbCreds{'base'}.")");
+
+      # Submit package file to GOKb
 
       my $postResult = postData('crossReferencePackage', \%package);
 
@@ -955,9 +1007,6 @@ sub createJSON {
     }
     $packagesTotal++;
   } ## End Package
-  
-  my $titlesFile = $titleDir->file("titles_".$filter."_".$endpoint.".json");
-  my $orgsFile = $orgsDir->file("gnd_orgs_".$endpoint.".json");
 
   # Write collected titles & orgs to file
   if($localPkg == 0){
@@ -991,17 +1040,6 @@ sub createJSON {
     say $out_orgs $json_orgs->pretty(1)->encode( \%orgsToAdd );
     
   }else{
-    my $json_titles = do {
-      open(my $json_fh, '<' , $titlesFile)
-          or $logger->warn("Konnte \$tfileName\" nicht öffnen: $!\n");
-      local $/;
-      <$json_fh>
-    };
-  
-    if($json_titles){
-      @allTitles = @{decode_json($json_titles)}
-          or $logger->warn("Titel-JSON konnte nicht gelesen werden!\n");
-    }
         
     my $json_orgs = do {
       open(my $json_fh, '<' , $orgsFile)
@@ -1034,29 +1072,6 @@ sub createJSON {
         $logger->error("Could not upload Org! Errorcode $postResult");
 
         $skippedOrgs++;
-      }
-    }
-  }
-
-  # Submit collected titles to GOKb
-
-  my $skippedTitles = 0;
-
-  if($postData == 1){
-    sleep 3;
-
-    my $sumTitles = scalar @allTitles;
-
-    $logger->info("Submitting $sumTitles titles to GOKb (".$gokbCreds{'base'}.")");
-
-    foreach my $title (@allTitles){
-      my %curTitle = %{ $title };
-      my $postResult = postData('crossReferenceTitle', \%curTitle);
-
-      if($postResult != 0){
-        $logger->error("Could not upload Title! Errorcode $postResult");
-
-        $skippedTitles++;
       }
     }
   }
@@ -1112,6 +1127,7 @@ sub processPackage {
   my $currentTitle = 0;
   my %allISSN;
   my %inPackageIDs;
+  my @packageTitles;
   my %package;
   my %packageWarnings;
   
@@ -1119,7 +1135,7 @@ sub processPackage {
     'titlesTotal' => 0,
     'duplicateISSNs' => 0,
     'duplicateZDBids' => 0,
-    'noISSN' => 0,
+    'noISXN' => 0,
     'wrongISSN' => 0,
     'pubFromGnd' => 0,
     'pubFromAuthor' => 0,
@@ -1229,13 +1245,7 @@ sub processPackage {
       name => "Natliz-SRU",
       normname => "Natliz_SRU"
     );
-  }elsif($endpoint eq 'gbvcat'){
-    %pkgSource = (
-      url => "http://sru.gbv.de/gbvcat",
-      name => "GBVCAT-SRU"
-    );
-  };
-
+  }
   my $pkgNoProv = "$pkgName: $pkgType";
 
   $package{'packageHeader'} = {
@@ -1253,7 +1263,7 @@ sub processPackage {
     global => "Consortium",
     listVerifier => "",
     userListVerifier => $userListVer,
-    nominalPlatform => (%pkgPlatform) ? \%pkgPlatform : "",
+    nominalPlatform => \%pkgPlatform,
     nominalProvider => $provider,
     listVerifiedDate => $listVerDate,
     source => \%pkgSource,
@@ -1262,463 +1272,245 @@ sub processPackage {
 
   $package{'tipps'} = [];
   
-  my %attrs;
   my %packageHeader = %{$package{'packageHeader'}};
+  my @toQuery = ();
+  my %attrsScopes;
+#   my %attrsScopes = {
+#     gvk => {
+#       book => {
+#         query => 'pica.xpr='.$packageInfo{'sigel'}.' and pica.mak=Oa* sortBy year/sort.ascending',
+#         base => 'http://sru.gbv.de/gvk',
+#         recordSchema => 'picatitle',
+#         parser => 'picaxml',
+#         _max_results => 3
+#       },
+#       journal => {
+#         query => 'pica.xpr='.$packageInfo{'sigel'}.' and (pica.mak=Ob* or pica.mak=Od*) sortBy year/sort.ascending',
+#         base => 'http://sru.gbv.de/gvk',
+#         recordSchema => 'picatitle',
+#         parser => 'picaxml',
+#         _max_results => 3
+#       },
+#       all => {
+#         query => 'pica.xpr='.$packageInfo{'sigel'}.' and pica.mak=O* sortBy year/sort.ascending',
+#         base => 'http://sru.gbv.de/gvk',
+#         recordSchema => 'picatitle',
+#         parser => 'picaxml',
+#         _max_results => 3
+#       }
+#     },
+#     gbvcat => {
+#       book => {
+#         query => 'pica.xpr='.$packageInfo{'sigel'}.' and pica.mak=Oa* sortBy year/sort.ascending',
+#         base => 'http://sru.gbv.de/gbvcat',
+#         recordSchema => 'picatitle',
+#         parser => 'picaxml',
+#         _max_results => 3
+#       },
+#       journal => {
+#         query => 'pica.xpr='.$packageInfo{'sigel'}.' and (pica.mak=Ob* or pica.mak=Od*) sortBy year/sort.ascending',
+#         base => 'http://sru.gbv.de/gbvcat',
+#         recordSchema => 'picatitle',
+#         parser => 'picaxml',
+#         _max_results => 3
+#       },
+#       all => {
+#         query => 'pica.xpr='.$packageInfo{'sigel'}.'  and pica.mak=O* sortBy year/sort.ascending',
+#         base => 'http://sru.gbv.de/gbvcat',
+#         recordSchema => 'picatitle',
+#         parser => 'picaxml',
+#         _max_results => 3
+#       }
+#     },
+#     zdb => {
+#       all => {
+#         query => 'pica.xpr='.$packageInfo{'sigel'}.'  and pica.mak=O* sortBy year/sort.ascending',
+#         base => 'http://services.dnb.de/sru/zdb',
+#         recordSchema => 'PicaPlus-xml',
+#         parser => 'ppxml',
+#         _max_results => 3
+#       },
+#       journal => {
+#         query => 'pica.xpr='.$packageInfo{'sigel'}.'  and pica.mak=O* sortBy year/sort.ascending',
+#         base => 'http://services.dnb.de/sru/zdb',
+#         recordSchema => 'PicaPlus-xml',
+#         parser => 'ppxml',
+#         _max_results => 3
+#       }
+#     },
+#     natliz => {
+#       book => {
+#         query => 'pica.xpr='.$packageInfo{'sigel'}.' and pica.mak=Oa* sortBy year/sort.ascending',
+#         base => 'http://sru.gbv.de/natliz',
+#         recordSchema => 'picatitle',
+#         parser => 'picaxml',
+#         _max_results => 3
+#       },
+#       journal => {
+#         query => 'pica.xpr='.$packageInfo{'sigel'}.' and (pica.mak=Ob* or pica.mak=Od*) sortBy year/sort.ascending',
+#         base => 'http://sru.gbv.de/natlizzss',
+#         recordSchema => 'picatitle',
+#         parser => 'picaxml',
+#         _max_results => 3
+#       },
+#       database => {
+#         query => 'pica.xpr='.$packageInfo{'sigel'}.' and (pica.mak=Ob* or pica.mak=Od*) sortBy year/sort.ascending',
+#         base => 'http://sru.gbv.de/natlizfak',
+#         recordSchema => 'picatitle',
+#         parser => 'picaxml',
+#         _max_results => 3
+#       }
+#     }
+#   };
+
+  $attrsScopes{'gvk'}{'book'} = {
+    query => 'pica.xpr='.$packageInfo{'sigel'}.' and pica.mak=Oa* sortBy year/sort.ascending',
+    base => 'http://sru.gbv.de/gvk',
+    recordSchema => 'picatitle',
+    parser => 'picaxml',
+    _max_results => 3
+  };
+
+  $attrsScopes{'gvk'}{'journal'} = {
+    query => 'pica.xpr='.$packageInfo{'sigel'}.' and (pica.mak=Ob* or pica.mak=Od*) sortBy year/sort.ascending',
+    base => 'http://sru.gbv.de/gvk',
+    recordSchema => 'picatitle',
+    parser => 'picaxml',
+    _max_results => 3
+  };
+
+  $attrsScopes{'gvk'}{'all'} = {
+    query => 'pica.xpr='.$packageInfo{'sigel'}.' and pica.mak=O* sortBy year/sort.ascending',
+    base => 'http://sru.gbv.de/gvk',
+    recordSchema => 'picatitle',
+    parser => 'picaxml',
+    _max_results => 3
+  };
+
+  $attrsScopes{'gbvcat'}{'book'} = {
+    query => 'pica.xpr='.$packageInfo{'sigel'}.' and pica.mak=Oa* sortBy year/sort.ascending',
+    base => 'http://sru.gbv.de/gbvcat',
+    recordSchema => 'picatitle',
+    parser => 'picaxml',
+    _max_results => 3
+  };
+
+  $attrsScopes{'gbvcat'}{'journal'} = {
+    query => 'pica.xpr='.$packageInfo{'sigel'}.' and (pica.mak=Ob* or pica.mak=Od*) sortBy year/sort.ascending',
+    base => 'http://sru.gbv.de/gbvcat',
+    recordSchema => 'picatitle',
+    parser => 'picaxml',
+    _max_results => 3
+  };
+
+  $attrsScopes{'gbvcat'}{'all'} = {
+    query => 'pica.xpr='.$packageInfo{'sigel'}.'  and pica.mak=O* sortBy year/sort.ascending',
+    base => 'http://sru.gbv.de/gbvcat',
+    recordSchema => 'picatitle',
+    parser => 'picaxml',
+    _max_results => 3
+  };
+
+  $attrsScopes{'zdb'}{'all'} = {
+    query => 'pica.xpr='.$packageInfo{'sigel'}.'  and pica.mak=O* sortBy year/sort.ascending',
+    base => 'http://services.dnb.de/sru/zdb',
+    recordSchema => 'PicaPlus-xml',
+    parser => 'ppxml',
+    _max_results => 3
+  };
+
+  $attrsScopes{'zdb'}{'all'} = {
+    query => 'pica.xpr='.$packageInfo{'sigel'}.'  and pica.mak=O* sortBy year/sort.ascending',
+    base => 'http://services.dnb.de/sru/zdb',
+    recordSchema => 'PicaPlus-xml',
+    parser => 'ppxml',
+    _max_results => 3
+  };
+
+  $attrsScopes{'natliz'}{'book'} = {
+    query => 'pica.xpr='.$packageInfo{'sigel'}.' and pica.mak=Oa* sortBy year/sort.ascending',
+    base => 'http://sru.gbv.de/natliz',
+    recordSchema => 'picatitle',
+    parser => 'picaxml',
+    _max_results => 3
+  };
+
+  $attrsScopes{'natliz'}{'journal'} = {
+    query => 'pica.xpr='.$packageInfo{'sigel'}.' and (pica.mak=Ob* or pica.mak=Od*) sortBy year/sort.ascending',
+    base => 'http://sru.gbv.de/natlizzss',
+    recordSchema => 'picatitle',
+    parser => 'picaxml',
+    _max_results => 3
+  };
+
+  $attrsScopes{'natliz'}{'database'} = {
+    query => 'pica.xpr='.$packageInfo{'sigel'}.' and (pica.mak=Ob* or pica.mak=Od*) sortBy year/sort.ascending',
+    base => 'http://sru.gbv.de/natlizfak',
+    recordSchema => 'picatitle',
+    parser => 'picaxml',
+    _max_results => 3
+  };
   
-  if($endpoint eq "gvk" || $endpoint eq "gbvcat"){
-    my $qryString = 'pica.xpr='.$packageInfo{'sigel'};
-
-    if($requestedType eq "journal"){
-      $qryString .= ' and (pica.mak=Ob* or pica.mak=Od*)';
-    }elsif($requestedType eq "book"){
-      $qryString .= ' and pica.mak=Oa*';
-    }else{
-      $qryString .= ' and pica.mak=O*';
-    }
-
-    $qryString .= ' sortBy year/sort.ascending';
-    
-    if($endpoint eq "gvk") {
-      $attrs{'base'} = 'http://sru.gbv.de/gvk';
-    } else {
-      $attrs{'base'} = 'http://sru.gbv.de/gbvcat';
-    }
-
-    $attrs{'query'} = $qryString;
-    $attrs{'recordSchema'} = 'picatitle';
-    $attrs{'parser'} = 'picaxml';
-    $attrs{'_max_results'} = 3;
-
-    my $sruTitles = Catmandu::Importer::SRU->new(%attrs)
-      or $logger->logdie("Abfrage über ".$attrs{'base'}." fehlgeschlagen!");
-      
-    eval{
-      while (my $titleRecord = $sruTitles->next){
-        $currentTitle++;
-        if(pica_value($titleRecord, '006Z0')){
-          $logger->info("Verarbeite Titel ".($currentTitle)." von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '006Z0').")");
-        }else{
-          $logger->info("Verarbeite Titel ".($currentTitle)." von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '003@0').")");
-        }
-        
-        my ($tipps, $titleStats, $titleWarnings) = processTitle($titleRecord, $pkgType, $endpoint, %packageHeader);
-        
-        my @tipps = @{$tipps};
-        my %titleStats = %{$titleStats};
-        my %titleWarnings = %{$titleWarnings};
-        
-        if(scalar @tipps > 0){
-          push @{ $package{'tipps'} }, @tipps;
-        }
-        
-        foreach my $statsKey (keys %pkgStats){
-          if($titleStats{$statsKey}){
-            $pkgStats{$statsKey} += $titleStats{$statsKey};
-          }
-        }
-        
-        if(%titleWarnings && $titleWarnings{'id'} ne ""){
-          foreach my $wKey (keys %titleWarnings){
-            if($wKey ne 'id' && scalar @{$titleWarnings{$wKey}} > 0){
-              $packageWarnings{$wKey}{$titleWarnings{'id'}} = $titleWarnings{$wKey};
-            }
-          }
-        }
-      }
-      1;
-    } or do {
-      $logger->error("SRU error for ".$packageInfo{'sigel'}.":");
-      say $@;
-      
-      $package{'tipps'} = [];
-      return \%package, \%pkgStats, \%packageWarnings;
-    };
-    
-  }elsif($endpoint eq "zdb"){
-    my $qryString = 'dnb.isil='.$packageInfo{'sigel'};
-    
-    $attrs{'base'} = 'http://services.dnb.de/sru/zdb';
-    $attrs{'query'} = $qryString;
-    $attrs{'recordSchema'} = 'PicaPlus-xml';
-    $attrs{'parser'} = 'ppxml';
-    $attrs{'_max_results'} = 1;
-    
-    my $sruTitles = Catmandu::Importer::SRU->new(%attrs)
-      or $logger->logdie("Abfrage über ".$attrs{'base'}." fehlgeschlagen!");
-    
-    eval{
-      $logger->info("Got results for package from ZDB!");
-      while (my $titleRecord = $sruTitles->next){
-        $currentTitle++;
-        if(pica_value($titleRecord, '006Z0')){
-          $logger->info("Verarbeite Titel ".($currentTitle)." von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '006Z0').")");
-        }else{
-          $logger->info("Verarbeite Titel ".($currentTitle)." von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '003@0').")");
-        }
-
-        my ($tipps, $titleStats, $titleWarnings) = processTitle($titleRecord, $pkgType, "zdb", %packageHeader);
-        
-        my @tipps = @{$tipps};
-        my %titleStats = %{$titleStats};
-        my %titleWarnings = %{$titleWarnings};
-        
-        if(scalar @tipps > 0){
-          push @{ $package{'tipps'} }, @tipps;
-        }
-        
-        foreach my $statsKey (keys %pkgStats){
-          if($titleStats{$statsKey}){
-            $pkgStats{$statsKey} += $titleStats{$statsKey};
-          }
-        }
-        
-        if(%titleWarnings && $titleWarnings{'id'} ne ""){
-          foreach my $wKey (keys %titleWarnings){
-            if($wKey ne 'id' && scalar @{$titleWarnings{$wKey}} > 0){
-              $packageWarnings{$wKey}{$titleWarnings{'id'}} = $titleWarnings{$wKey};
-            }
-          }
-        }
-      }
-      1;
-    } or do {
-      $logger->error("SRU error for ".$packageInfo{'sigel'}.":");
-      say $@;
-      
-      $package{'tipps'} = [];
-      return \%package, \%pkgStats, \%packageWarnings;
-    };
-    
-    if($requestedType eq "all"){
-    
-      $qryString = 'pica.xpr='.$packageInfo{'sigel'}." and pica.mak=Oa*";
-    
-      $attrs{'base'} = 'http://sru.gbv.de/gvk';
-      $attrs{'query'} = $qryString;
-      $attrs{'recordSchema'} = 'picatitle';
-      $attrs{'parser'} = 'picaxml';
-      $attrs{'_max_results'} = 3;
-      
-      my $sruBooks = Catmandu::Importer::SRU->new(%attrs)
-        or $logger->logdie("Abfrage über ".$attrs{'base'}." fehlgeschlagen!");
-      eval{
-        $logger->info("Got additional results for package from GVK!");
-        while (my $titleRecord = $sruBooks->next){
-          $currentTitle++;
-        if(pica_value($titleRecord, '006Z0')){
-          $logger->info("Verarbeite Titel ".($currentTitle)." von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '006Z0').")");
-        }else{
-          $logger->info("Verarbeite Titel ".($currentTitle)." von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '003@0').")");
-        }
-
-          my ($tipps, $titleStats, $titleWarnings) = processTitle($titleRecord, $pkgType, "gvk", %packageHeader);
-          
-          my @tipps = @{$tipps};
-          my %titleStats = %{$titleStats};
-          my %titleWarnings = %{$titleWarnings};
-          
-          if(scalar @tipps > 0){
-            push @{ $package{'tipps'} }, @tipps;
-          }
-          
-          foreach my $statsKey (keys %pkgStats){
-            if($titleStats{$statsKey}){
-              $pkgStats{$statsKey} += $titleStats{$statsKey};
-            }
-          }
-          
-          if(%titleWarnings && $titleWarnings{'id'} ne ""){
-            foreach my $wKey (keys %titleWarnings){
-              if($wKey ne 'id' && scalar @{$titleWarnings{$wKey}} > 0){
-                $packageWarnings{$wKey}{$titleWarnings{'id'}} = $titleWarnings{$wKey};
-              }
-            }
-          }
-        }
-        1;
-      } or do {
-        $logger->error("SRU error for ".$packageInfo{'sigel'}.":");
-        say $@;
-        
-        $package{'tipps'} = [];
-        return \%package, \%pkgStats, \%packageWarnings;
-      };
-    }
-      
-  }elsif($endpoint eq "natliz"){
-
-    $logger->debug("Setting endpoint config..");
-    my $qryString = 'pica.xpr='.$packageInfo{'sigel'};
-    
-    $attrs{'base'} = 'http://sru.gbv.de/natliz';
-    $attrs{'query'} = $qryString;
-    $attrs{'recordSchema'} = 'picatitle';
-    $attrs{'parser'} = 'picaxml';
-    $attrs{'_max_results'} = 5;
-    
-    if ($requestedType eq 'book'){
-
-      $qryString .= " and pica.mak=Oa*";
-      $attrs{'query'} = $qryString;
-
-      $logger->debug("Suche mit query ".${qryString}."!");
-    
-      my $sruTitles = Catmandu::Importer::SRU->new(%attrs)
-        or $logger->logdie("Abfrage über ".$attrs{'base'}." fehlgeschlagen!");
-        
-      eval {   
-        while (my $titleRecord = $sruTitles->next){
-          $currentTitle++;
-          if(pica_value($titleRecord, '006Z0')){
-            $logger->info("Verarbeite Titel ".($currentTitle)." von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '006Z0').")");
-          }else{
-            $logger->info("Verarbeite Titel ".($currentTitle)." von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '003@0').")");
-          }
-          
-          my ($tipps, $titleStats, $titleWarnings) = processTitle($titleRecord, $pkgType, "natliz", %packageHeader);
-
-          my @tipps = @{$tipps};
-          my %titleStats = %{$titleStats};
-          my %titleWarnings = %{$titleWarnings};
-
-          
-          if(scalar @tipps > 0){
-            push @{ $package{'tipps'} }, @tipps;
-          }
-          
-          foreach my $statsKey (keys %pkgStats){
-            if(%titleStats && $titleStats{$statsKey}){
-              $pkgStats{$statsKey} += $titleStats{$statsKey};
-            }
-          }
-          
-          if(%titleWarnings && $titleWarnings{'id'} ne ""){
-            foreach my $wKey (keys %titleWarnings){
-              if($wKey ne 'id' && scalar @{$titleWarnings{$wKey}} > 0){
-                $packageWarnings{$wKey}{$titleWarnings{'id'}} = $titleWarnings{$wKey};
-              }
-            }
-          }
-        }
-        1;
-      } or do {
-        $logger->error("SRU error for ".$packageInfo{'sigel'}.":");
-        say $@;
-        
-        $package{'tipps'} = [];
-        return \%package, \%pkgStats, \%packageWarnings;
-      };
-        
-    }elsif($requestedType eq 'journal'){
-
-      $attrs{'base'} = 'http://sru.gbv.de/natlizzss';
-      $qryString .= " and (pica.mak=Ob* or pica.mak=Od*)";
-      $attrs{'query'} = $qryString;
-    
-      my $sruTitles = Catmandu::Importer::SRU->new(%attrs)
-        or $logger->logdie("Abfrage über ".$attrs{'base'}." fehlgeschlagen!");
-
-      eval {  
-        while (my $titleRecord = $sruTitles->next){
-          $currentTitle++;
-          if(pica_value($titleRecord, '006Z0')){
-            $logger->info("Verarbeite Titel ".($currentTitle)." von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '006Z0').")");
-          }else{
-            $logger->info("Verarbeite Titel ".($currentTitle)." von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '003@0').")");
-          }
-          
-          my ($tipps, $titleStats, $titleWarnings) = processTitle($titleRecord, $pkgType, "natliz", %packageHeader);
-
-          my @tipps = @{$tipps};
-          my %titleStats = %{$titleStats};
-          my %titleWarnings = %{$titleWarnings};
-          
-          if(scalar @tipps > 0){
-            push @{ $package{'tipps'} }, @tipps;
-          }
-          
-          foreach my $statsKey (keys %pkgStats){
-            if(%titleStats && $titleStats{$statsKey}){
-              $pkgStats{$statsKey} += $titleStats{$statsKey};
-            }
-          }
-
-          if(%titleWarnings && $titleWarnings{'id'} ne ""){
-            foreach my $wKey (keys %titleWarnings){
-              if($wKey ne 'id' && scalar @{$titleWarnings{$wKey}} > 0){
-                $packageWarnings{$wKey}{$titleWarnings{'id'}} = $titleWarnings{$wKey};
-              }
-            }
-          }
-        }
-        1;
-      } or do {
-        $logger->error("SRU error for ".$packageInfo{'sigel'}.":");
-        say $@;
-        
-        $package{'tipps'} = [];
-        return \%package, \%pkgStats, \%packageWarnings;
-      };
-        
-    }elsif($requestedType eq 'all'){
-      
-      my $sruBooks = Catmandu::Importer::SRU->new(%attrs)
-        or $logger->logdie("Abfrage über ".$attrs{'base'}." fehlgeschlagen!");
-        
-      $logger->info("SRU-Antwort für Monographien erhalten!");
-      
-      eval{
-        while (my $titleRecord = $sruBooks->next){
-          $currentTitle++;
-          if(pica_value($titleRecord, '006Z0')){
-            $logger->info("Verarbeite Titel ".($currentTitle)." von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '006Z0').")");
-          }else{
-            $logger->info("Verarbeite Titel ".($currentTitle)." von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '003@0').")");
-          }
-          
-          my ($btipps, $btitleStats, $btitleWarnings) = processTitle($titleRecord, $pkgType, "natliz", %packageHeader);
-
-          my @btipps = @{$btipps};
-          my %btitleStats = %{$btitleStats};
-          my %btitleWarnings = %{$btitleWarnings};
-          
-          if(scalar @btipps > 0){
-            push @{ $package{'tipps'} }, @btipps;
-          }
-          
-          foreach my $statsKey (keys %pkgStats){
-            if($btitleStats{$statsKey}){
-              $pkgStats{$statsKey} += $btitleStats{$statsKey};
-            }
-          }
-          
-          if(%btitleWarnings && $btitleWarnings{'id'} ne ""){
-            foreach my $wKey (keys %btitleWarnings){
-              if($wKey ne 'id' && scalar @{$btitleWarnings{$wKey}} > 0){
-                $packageWarnings{$wKey}{$btitleWarnings{'id'}} = $btitleWarnings{$wKey};
-              }
-            }
-          }
-        }
-        1;
-      } or do {
-        $logger->error("SRU error for ".$packageInfo{'sigel'}.":");
-        say $@;
-        
-        $package{'tipps'} = [];
-        return \%package, \%pkgStats, \%packageWarnings;
-      };
-        
-#       $attrs{'base'} = 'http://sru.gbv.de/natlizzss';
-#       $qryString .= " and (pica.mak=Ob* or pica.mak=Od*)";
-#       $attrs{'query'} = $qryString;
-
-      my $qryString = 'dnb.isil='.$packageInfo{'sigel'};
-
-      $attrs{'base'} = 'http://services.dnb.de/sru/zdb';
-      $attrs{'query'} = $qryString;
-      $attrs{'recordSchema'} = 'PicaPlus-xml';
-      $attrs{'parser'} = 'ppxml';
-      $attrs{'_max_results'} = 1;
-        
-      my $sruJournals = Catmandu::Importer::SRU->new(%attrs)
-        or $logger->logdie("Abfrage über ".$attrs{'base'}." fehlgeschlagen!");
-        
-      $logger->info("SRU-Antwort für Journals erhalten!");
-      
-      eval{
-        while (my $titleRecord = $sruJournals->next){
-          $currentTitle++;
-          if(pica_value($titleRecord, '006Z0')){
-            $logger->info("Verarbeite Titel ".($currentTitle)." von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '006Z0').")");
-          }else{
-            $logger->info("Verarbeite Titel ".($currentTitle)." von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '003@0').")");
-          }
-          
-          my ($jtipps, $jtitleStats, $jtitleWarnings) = processTitle($titleRecord, $pkgType, %packageHeader, "natliz");
-          my @jtipps = @{$jtipps};
-          my %jtitleStats = %{$jtitleStats};
-          my %jtitleWarnings = %{$jtitleWarnings};
-          
-          if(scalar @jtipps > 0){
-            push @{ $package{'tipps'} }, @jtipps;
-          }
-          
-          foreach my $statsKey (keys %pkgStats){
-            if($jtitleStats{$statsKey}){
-              $pkgStats{$statsKey} += $jtitleStats{$statsKey};
-            }
-          }
-          
-          if(%jtitleWarnings && $jtitleWarnings{'id'} ne ""){
-            foreach my $wKey (keys %jtitleWarnings){
-              if($wKey ne 'id' && scalar @{$jtitleWarnings{$wKey}} > 0){
-                $packageWarnings{$wKey}{$jtitleWarnings{'id'}} = $jtitleWarnings{$wKey};
-              }
-            }
-          }
-        }
-        1;
-      } or do {
-        $logger->error("SRU error for ".$packageInfo{'sigel'}.":");
-        say $@;
-        
-        $package{'tipps'} = [];
-        return \%package, \%pkgStats, \%packageWarnings;
-      };
-        
-      $attrs{'base'} = 'http://sru.gbv.de/natlizfak';
-      $attrs{'query'} = 'pica.xpr='.$packageInfo{'sigel'};
-        
-      my $sruDatabases = Catmandu::Importer::SRU->new(%attrs)
-        or $logger->logdie("Abfrage über ".$attrs{'base'}." fehlgeschlagen!");
-        
-      $logger->info("SRU-Antwort für Datenbanken erhalten!");
-      
-      eval{
-        while (my $titleRecord = $sruDatabases->next){
-          $currentTitle++;
-          if(pica_value($titleRecord, '006Z0')){
-            $logger->info("Verarbeite Titel ".($currentTitle)." von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '006Z0').")");
-          }else{
-            $logger->info("Verarbeite Titel ".($currentTitle)." von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '003@0').")");
-          }
-        
-          my ($dtipps, $dtitleStats, $dtitleWarnings) = processTitle($titleRecord, $pkgType, %packageHeader);
-
-          my @dtipps = @{$dtipps};
-          my %dtitleStats = %{$dtitleStats};
-          my %dtitleWarnings = %{$dtitleWarnings};
-          
-          if(scalar @dtipps > 0){
-            push @{ $package{'tipps'} }, @dtipps;
-          }
-          
-          foreach my $statsKey (keys %pkgStats){
-            if($dtitleStats{$statsKey}){
-              $pkgStats{$statsKey} += $dtitleStats{$statsKey};
-            }
-          }
-          
-          if(%dtitleWarnings && $dtitleWarnings{'id'} ne ""){
-            foreach my $wKey (keys %dtitleWarnings){
-              if($wKey ne 'id' && scalar @{$dtitleWarnings{$wKey}} > 0){
-                $packageWarnings{$wKey}{$dtitleWarnings{'id'}} = $dtitleWarnings{$wKey};
-              }
-            }
-          }
-        }
-        1;
-      } or do {
-        $logger->error("SRU error for ".$packageInfo{'sigel'}.":");
-        say $@;
-        
-        $package{'tipps'} = [];
-        return \%package, \%pkgStats, \%packageWarnings;
-      };
-    }
+  if ($endpoint eq "natliz" && $requestedType eq 'all') {
+    push @toQuery, $attrsScopes{$endpoint}{'book'};
+    push @toQuery, $attrsScopes{$endpoint}{'journal'};
+    push @toQuery, $attrsScopes{$endpoint}{'database'};
+  } else {
+    push @toQuery, $attrsScopes{$endpoint}{$requestedType};
   }
-  return \%package, \%pkgStats, \%packageWarnings;
+      
+  foreach my $attrs (@toQuery) {
+
+    my %attrs = %{$attrs};
+    my $sruTitles = Catmandu::Importer::SRU->new(%attrs)
+      or $logger->logdie("Abfrage über ".$attrs{'base'}." fehlgeschlagen!");
+
+    eval{
+      while (my $titleRecord = $sruTitles->next){
+        $currentTitle++;
+        if(pica_value($titleRecord, '006Z0')){
+          $logger->info("Verarbeite Titel ".($currentTitle)." von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '006Z0').")");
+        }else{
+          $logger->info("Verarbeite Titel ".($currentTitle)." von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '003@0').")");
+        }
+
+        my ($tipps, $titleStats, $titleWarnings, $titleObj) = processTitle($titleRecord, $pkgType, $endpoint, %packageHeader);
+
+        my @tipps = @{$tipps};
+        my %titleStats = %{$titleStats};
+        my %titleWarnings = %{$titleWarnings};
+        my %titleObj = %{$titleObj};
+
+        push @packageTitles, \%titleObj;
+
+        if(scalar @tipps > 0){
+          push @{ $package{'tipps'} }, @tipps;
+        }
+
+        foreach my $statsKey (keys %pkgStats){
+          if($titleStats{$statsKey}){
+            $pkgStats{$statsKey} += $titleStats{$statsKey};
+          }
+        }
+
+        if(%titleWarnings && $titleWarnings{'id'} ne ""){
+          foreach my $wKey (keys %titleWarnings){
+            if($wKey ne 'id' && scalar @{$titleWarnings{$wKey}} > 0){
+              $packageWarnings{$wKey}{$titleWarnings{'id'}} = $titleWarnings{$wKey};
+            }
+          }
+        }
+      }
+      1;
+    } or do {
+      $logger->error("SRU error for ".$packageInfo{'sigel'}.":");
+      say $@;
+
+      $package{'tipps'} = [];
+    };
+  }
+
+  return \%package, \%pkgStats, \%packageWarnings, \@packageTitles;
   $logger->info("Finished processing $currentTitle Titles of package ".$packageInfo{'sigel'});
 }
 
@@ -1757,7 +1549,7 @@ sub processTitle {
     $gokbMedium = "Book";
   }else{
     $logger->error("Kann Materialtyp für $ppn nicht bestimmen...");
-    return \@tipps, \%titleStats, \%titleWarnings;
+    return \@tipps, \%titleStats, \%titleWarnings, \%titleInfo;
   }
 
     # -------------------- Identifiers --------------------
@@ -1802,6 +1594,12 @@ sub processTitle {
       'type' => "doi",
       'value' => $doi
     };
+
+    if($titleStats{'doi'}){
+      $titleStats{'doi'}++;
+    }else{
+      $titleStats{'doi'} = 1;
+    }
   }
 
   ## Journal-IDs
@@ -1840,7 +1638,7 @@ sub processTitle {
       };
       $id = $ppn;
 
-      return \@tipps, \%titleStats, \%titleWarnings;
+      return \@tipps, \%titleStats, \%titleWarnings, \%titleInfo;
     }
 
     ## eISSN
@@ -1918,10 +1716,10 @@ sub processTitle {
         }
       }
     }else{
-      if($titleStats{'noISSN'}){
-        $titleStats{'noISSN'}++;
+      if($titleStats{'noISXN'}){
+        $titleStats{'noISXN'}++;
       }else{
-        $titleStats{'noISSN'} = 1;
+        $titleStats{'noISXN'} = 1;
       }
     }
 
@@ -1985,6 +1783,7 @@ sub processTitle {
 
   }elsif($gokbMedium eq "Book"){
     $id = $ppn;
+    my $numIsbn = 0;
 
     if(pica_value($titleRecord, '004AA')){
       my @isbnValues = @{pica_fields($titleRecord, '004A')};
@@ -2011,15 +1810,26 @@ sub processTitle {
           $subfPos++;
         }
 
-        push @{ $titleInfo{'identifiers'}} , {
-          'type' => "isbn",
-          'value' => $isbn
-        };
+        if ($isbn && ($isbnType eq 'Online' || !$isbnType)) {
+          push @{ $titleInfo{'identifiers'}} , {
+            'type' => "isbn",
+            'value' => $isbn
+          };
+          $numIsbn++;
+        }
+      }
+    }
+
+    if($numIsbn == 0) {
+      if($titleStats{'noISXN'}){
+        $titleStats{'noISXN'}++;
+      }else{
+        $titleStats{'noISXN'} = 1;
       }
     }
   }else{
     $logger->error("Kann Materialtyp für $ppn nicht bestimmen...");
-    return \@tipps, \%titleStats, \%titleWarnings;
+    return \@tipps, \%titleStats, \%titleWarnings, \%titleInfo;
   }
   $titleWarnings{'id'} = $id;
   ## Andere Identifier, z.B. OCLC-No.
@@ -2050,7 +1860,7 @@ sub processTitle {
   if(($requestedType eq "journal" && !$isJournal) || ($requestedType eq "book" && $isJournal)){
     $logger->warn("Überspringe Titel ".pica_value($titleRecord, '021Aa').", Materialcode: $materialType");
 
-    return \@tipps, \%titleStats, \%titleWarnings;
+    return \@tipps, \%titleStats, \%titleWarnings, \%titleInfo;
   }
 
   # -------------------- Title --------------------
@@ -2088,7 +1898,7 @@ sub processTitle {
         'comment' => "Kein Titel gefunden!"
     };
 
-    return \@tipps, \%titleStats, \%titleWarnings;
+    return \@tipps, \%titleStats, \%titleWarnings, \%titleInfo;
   }
 
   # -------------------- Other GOKb Fields --------------------
@@ -2304,10 +2114,11 @@ sub processTitle {
                 'comment' => "Mehrere Verlage in einem PICA-Feld!"
               };
             }
+          } else {
+            $preCorrectedPub = $pub[$subfPos+1];
+            $tempPub = $pub[$subfPos+1];
+            $logger->debug("Verlagsangabe: $tempPub");
           }
-          $preCorrectedPub = $pub[$subfPos+1];
-          $tempPub = $pub[$subfPos+1];
-          $logger->debug("Verlagsangabe: $tempPub");
         }
         if($subField eq 'h'){
 
@@ -3286,10 +3097,14 @@ sub processTitle {
           }else{
             $logger->info("Could not match $ppBase and ".$vTipp{'platform'}{'name'});
 
-            if (ref($remainingValidTipps{$tippType}) eq 'ARRAY'){
-              push @{$remainingValidTipps{$tippType}}, \%vTipp;
-            }else{
-              $remainingValidTipps{$tippType} = [\%vTipp];
+            if(!$tippType) {
+              push @skippedTipps, \%vTipp;
+            }else {
+              if (ref($remainingValidTipps{$tippType}) eq 'ARRAY'){
+                push @{$remainingValidTipps{$tippType}}, \%vTipp;
+              }else{
+                $remainingValidTipps{$tippType} = [\%vTipp];
+              }
             }
           }
         }else{
@@ -3495,7 +3310,7 @@ sub processTitle {
       $titleStats{'duplicateZDBids'} = 1;
     }
   }
-  return \@tipps, \%titleStats, \%titleWarnings;
+  return \@tipps, \%titleStats, \%titleWarnings, \%titleInfo;
   
 } ## End TitleInstance
 
