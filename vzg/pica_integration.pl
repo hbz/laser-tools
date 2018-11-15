@@ -1574,7 +1574,7 @@ sub processTitle {
     };
   }elsif($activeSource eq "gbvcat"){
     push @{ $titleInfo{'identifiers'} } , {
-      'type' => "zdb_ppn",
+      'type' => "gbvcat_ppn",
       'value' => $ppn
     };
   }
@@ -1917,6 +1917,15 @@ sub processTitle {
   # -------------------- Release notes --------------------
 
   my @releaseNotes = @{ pica_fields($titleRecord, '031N') };
+
+  if(pica_value($titleRecord, '032@a')) {
+    $titleInfo{'editionStatement'} = pica_value($titleRecord, '032@a');
+  }
+
+  if(pica_value($titleRecord, '032El')) {
+    $titleInfo{'volumeNumber'} = pica_value($titleRecord, '032El') =~ /\d+/
+  }
+
   my %releaseStart = (
     'year' => "",
     'month' => "",
