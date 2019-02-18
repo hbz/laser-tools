@@ -33,6 +33,8 @@
 #  * nur zulässig in Verbindung mit --post UND --json mit Sigel
 #  * Dateiname Titel: "./titles/titles_[SIGEL]_[endpoint].json"
 #  * Dateiname Paket: "./packages/[SIGEL]_[endpoint].json"
+# --pkg_owner
+#  * Bestimmt den letzten Teil des Paketnamens
 
 use v5.22;
 use strict;
@@ -211,14 +213,15 @@ if($ARGV[$argPost+1] && index($ARGV[$argPost+1], "http") == 0){
   $customTarget = 1;
 }
 
-if($argOwner >= 0 && $ARGV[$argOwner+1] && index($ARGV[$argOwner+1], "--") == 0){
+if($argOwner >= 0 && $ARGV[$argOwner+1] && index($ARGV[$argOwner+1], "--") == -1){
   $owner = $ARGV[$argOwner+1];
 }
 
 if( $argType >= 0) {
   if($ARGV[$argType+1] && any { $_ eq $ARGV[$argType+1] } ("journal","book","all") ) {
     $requestedType = $ARGV[$argType+1];
-  }else{
+  }
+  else{
     $logger->logdie("Ungültiger Materialtyp! Möglich sind 'journal'(Standard), 'book' und 'all'");
   }
 }
@@ -233,7 +236,8 @@ if($argLocal >= 0){
 if($argEndpoint >= 0) {
   if($ARGV[$argEndpoint+1] && any { $_ eq $ARGV[$argEndpoint+1] } ("zdb","natliz","gvk","gbvcat") ) {
     $endpoint = $ARGV[$argEndpoint+1];
-  }else{
+  }
+  else{
     $logger->logdie("Ungültiger Endpunkt! Möglich sind 'zdb', 'natliz', 'gbvcat'(Zugriffsbeschränkt) und 'gvk'(Standard)");
   }
 }
@@ -250,7 +254,8 @@ if($argP >= 0){
       $cmsCreds{'base'} = $creds[0];
       $cmsCreds{'username'} = $creds[1];
       $cmsCreds{'password'} = $creds[2];
-    }else{
+    }
+    else{
       $logger->logdie("Falsches Format der DB-Daten! Abbruch!");
     }
   }
@@ -279,27 +284,32 @@ if($argP >= 0){
         }
         if($gokbCreds{'username'} && $gokbCreds{'password'}){
           $post = 1;
-        }else{
+        }
+        else{
           $logger->warn("Kein Benutzername/Passwort, überspringe GOKb-Import!");
         }
       }
       if(index($ARGV[$argJ+1], "ZDB") == 0){
         $filter = $ARGV[$argJ+1];
         createJSON($post, $endpoint, $newOrgs, $localPkg);
-      }else{
+      }
+      else{
         $logger->info("Pakete abgerufen, erstelle JSONs!");
 
         createJSON($post, $endpoint, $newOrgs, $localPkg);
       }
-    }else{
+    }
+    else{
       $logger->logdie("Erstelle keine JSONs, Sigeldatei wurde nicht erstellt!");
     }
-  }else{
+  }
+  else{
       $logger->info("Erstelle nur Paketdatei $knownSeals!");
 
       getSeals($cmsCreds{'base'},$cmsCreds{'username'},$cmsCreds{'password'});
   }
-}elsif($argJ >= 0){
+}
+elsif($argJ >= 0){
   if(-e $knownSeals){
     my $post = 0;
 
@@ -324,7 +334,8 @@ if($argP >= 0){
 
       if($gokbCreds{'username'} && $gokbCreds{'password'}){
         $post = 1;
-      }else{
+      }
+      else{
         $logger->warn("Kein Benutzername/Passwort, überspringe GOKb-Import!");
       }
     }
@@ -334,12 +345,14 @@ if($argP >= 0){
       $logger->info("Paketdatei gefunden, erstelle JSON für $filter!");
 
       createJSON($post, $endpoint, $newOrgs, $localPkg);
-    }else{
+    }
+    else{
       $logger->info("Paketdatei gefunden, erstelle JSONs!");
 
       createJSON($post, $endpoint, $newOrgs, $localPkg);
     }
-  }else{
+  }
+  else{
     $logger->error("Paketdatei nicht vorhanden!");
 
     $logger->logdie("Zum Erstellen mit Parameter '--packages' starten!");
@@ -382,7 +395,7 @@ sub getZdbName {
 
   my %attrs = (
       base => 'https://services.dnb.de/sru/bib',
-      query => 'isl='.$sig,
+      query => 'dnb.isl='.$sig,
       recordSchema => 'PicaPlus-xml',
       parser => 'ppxml'
   );
@@ -405,7 +418,8 @@ sub getZdbName {
 
         if($bracketPos > 0){
           $pkgInfos{'name'} = substr($messyName, 0, $bracketPos-1);
-        }else {
+        }
+        else {
           $pkgInfos{'name'} = $messyName;
         }
 
@@ -447,7 +461,8 @@ sub getZdbName {
             foreach my $subField (@pUrl){
               if($subField eq 'u'){
                 $url = $pUrl[$subfPos+1];
-              }elsif($subField eq 'z'){
+              }
+              elsif($subField eq 'z'){
                 $urlType = $pUrl[$subfPos+1];
               }
               $subfPos++;
@@ -471,7 +486,8 @@ sub getZdbName {
           ? pica_value($packageInstance, '035Pa')
           : "";
 
-      }else{
+      }
+      else{
         print strftime '%Y-%m-%d %H:%M:%S', localtime;
         print " - Überspringe Eintrag für ".$sig;
         print ": 035Ea: ".pica_value($packageInstance, '035Ea');
@@ -546,10 +562,12 @@ sub getSeals {
       my $lType;
       if($licence_type eq 'NLLicenceModelStandard'){
         $lType = "NL";
-      }elsif($licence_type eq 'NLLicenceModelOptIn'){
+      }
+      elsif($licence_type eq 'NLLicenceModelOptIn'){
         if ($pkgInfos{'type'} =~ /Allianz-Lizenz/ ) {
           $lType = "AL";
-        }else{
+        }
+        else{
           $lType = $owner;
         }
       }
@@ -607,20 +625,23 @@ sub getSeals {
                 $tempISIL =~ s/^(\w+)([\/\s\-]?)(\d+\/?\w*\/?\d?)$/$1$3/g;
                 $tempISIL =~ s/\//-/g;
 
-              }elsif($tempISIL =~ /^\d+\/?[\d\w]*/){
+              }
+              elsif($tempISIL =~ /^\d+\/?[\d\w]*/){
 
                 if($tempISIL =~ /^\d+\w*$/){
-
-                }elsif($tempISIL =~ /^\d+\/[\d\w]+$/){
+                }
+                elsif($tempISIL =~ /^\d+\/[\d\w]+$/){
 
                   $tempISIL =~ s/\//-/g;
 
-                }else{
+                }
+                else{
 
                   $hasError = 1;
 
                 }
-              }else{
+              }
+              else{
 
                 $hasError = 1;
 
@@ -648,19 +669,23 @@ sub getSeals {
                   $pkg{'orgStats'}{'numValidSig'}++;
                   $isil = $tempISIL;
                   $knownIsils{$tempISIL} = 1;
-                }else{
+                }
+                else{
                   $pkg{'orgStats'}{'numWrongSig'}++;
                   $logger->warn("Suche nach $tempISIL erfolglos!");
                   $knownIsils{$tempISIL} = 0;
                 }
-              }elsif($knownIsils{$tempISIL} == 1){
+              }
+              elsif($knownIsils{$tempISIL} == 1){
                 $isil = $tempISIL;
               }
-            }else{
+            }
+            else{
               $pkg{'orgStats'}{'numWrongSig'}++;
               $logger->warn("Sigel $orgSigel ist offensichtlich ungültig.");
             }
-          }else{
+          }
+          else{
             $pkg{'orgStats'}{'numWrongSig'}++;
           }
         }
@@ -706,7 +731,8 @@ sub getSeals {
       }
 
       sleep 1;
-    }else{
+    }
+    else{
       $logger->error("Kein Paketsigel oder falsches Format in zuid: $zuid.");
     }
   };
@@ -757,7 +783,8 @@ sub createJSON {
       $knownSelection{$filter} = $known{$filter};
 
       $logger->info("Generating JSON only for $filter!");
-    }else{
+    }
+    else{
       $logger->warn("Paket nicht bekannt! Suche Metadaten über Sigelstelle..");
 
       my %pkgInfos = getZdbName($filter);
@@ -766,13 +793,16 @@ sub createJSON {
       if(length($pkgInfos{'type'})){
         if($pkgInfos{'type'} =~ /Allianz-Lizenz/){
           $lType = "AL";
-        }elsif($pkgInfos{'type'} eq "Nationallizenz"){
+        }
+        elsif($pkgInfos{'type'} eq "Nationallizenz"){
           $lType = "NL";
-        }else{
+        }
+        else{
           $lType = $owner;
         }
         $logger->info("Verarbeite Paket vom Typ ".$pkgInfos{'type'}."");
-      }else{
+      }
+      else{
         $logger->error("Konnte den Pakettyp nicht identifizieren.");
         return -1;
       }
@@ -788,12 +818,14 @@ sub createJSON {
           url => $pkgInfos{'mainUrl'},
           scope => $pkgInfos{'scope'},
         };
-      }else{
+      }
+      else{
         $logger->error("Zurückgeliefertes Paket hat keinen Namen!");
         return -1;
       }
     }
-  }else{
+  }
+  else{
     %knownSelection = %known;
 
     $logger->info("Generating JSON for all packages!");
@@ -915,7 +947,8 @@ sub createJSON {
             or $logger->warn("Titel-JSON konnte nicht gelesen werden!\n");
       }
       
-    }else{
+    }
+    else{
     
       my %currentPackageInfo = %{$knownSelection{$sigel}};
       
@@ -945,7 +978,8 @@ sub createJSON {
       foreach my $pkgStat (keys %pkgStats){
         if (!$globalStats{$pkgStat}){
           $globalStats{$pkgStat} = $pkgStats{$pkgStat};
-        }else{
+        }
+        else{
           $globalStats{$pkgStat} += $pkgStats{$pkgStat};
         }
       }
@@ -970,15 +1004,10 @@ sub createJSON {
 
       $logger->info("Submitting $sumTitles titles to GOKb (".$gokbCreds{'base'}.")");
 
-      foreach my $title (@packageTitles){
-        my %curTitle = %{ $title };
-        my $postResult = postData('crossReferenceTitle', \%curTitle);
+      my $titlePostResult = postData('crossReferenceTitle', \@packageTitles);
 
-        if($postResult != 0){
-          $logger->error("Could not upload Title! Errorcode $postResult");
-
-          $skippedTitles++;
-        }
+      if($titlePostResult != 0){
+        $logger->error("Error uploading title! Errorcode $titlePostResult");
       }
 
       sleep 2;
@@ -1000,7 +1029,8 @@ sub createJSON {
             $logger->error("Second try failed as well. Adding to report..");
             $skippedPackages .= $sigel." ";
           }
-        } else {
+        }
+        else {
           $skippedPackages .= $sigel." ";
         }
       }
@@ -1039,7 +1069,8 @@ sub createJSON {
 
     say $out_orgs $json_orgs->pretty(1)->encode( \%orgsToAdd );
     
-  }else{
+  }
+  else{
         
     my $json_orgs = do {
       open(my $json_fh, '<' , $orgsFile)
@@ -1174,10 +1205,11 @@ sub processPackage {
   my $pkgYear = strftime '%Y', localtime;
 
   my %pkgPlatform;
+  my $checkedUrl;
 
   if ( $packageInfo{'url'} ) {
 
-    my $checkedUrl = checkUrl($packageInfo{'url'});
+    $checkedUrl = checkUrl($packageInfo{'url'});
 
     if (!$checkedUrl) {
       my @pkgInfoWarn;
@@ -1192,34 +1224,29 @@ sub processPackage {
       $packageWarnings{'all'}{'package'} = \@pkgInfoWarn;
       $packageWarnings{'zdb'}{'package'} = \@pkgInfoWarn;
     }
-    
-#     elsif ($checkedUrl ne $packageInfo{'url'}) {
-#       my @pkgInfoWarn;
-# 
-#       my %pWarn = (
-#         'value' => $packageInfo{'url'},
-#         'status' => 'redirected',
-#         'message' => 'Die im Sigelverzeichnis für dieses Paket angegebene URL ist nicht mehr aktuell.'
-#       );
-# 
-#       push @pkgInfoWarn, \%pWarn;
-#       $packageWarnings{'all'}{'package'} = \@pkgInfoWarn;
-#       $packageWarnings{'zdb'}{'package'} = \@pkgInfoWarn;
-#     }
+  }
+
+  if ($packageInfo{'platform'}) {
+    if (ref($packageInfo{'platform'}) eq 'HASH') {
+      %pkgPlatform = (
+        'name' => $packageInfo{'platform'}{'name'},
+        'primaryUrl' => $packageInfo{'platform'}{'primaryUrl'}
+      );
+    }
+    else {
+      $pkgPlatform{'name'} = $packageInfo{'platform'};
+      $pkgPlatform{'primaryUrl'} = $packageInfo{'url'};
+    }
+  }
+  elsif ($checkedUrl) {
+    my $pkgUrl = URI->new($packageInfo{'url'});
+    my $pkgScheme = $pkgUrl->scheme;
+    my $pkgHost = $pkgUrl->host;
+
+    my $urlName = lc (substr($pkgHost, 0, 3) eq 'www' ? substr($pkgHost, 4) : $pkgHost);
 
     $pkgPlatform{'primaryUrl'} = $packageInfo{'url'};
-
-    if($packageInfo{'platform'}) {
-      $pkgPlatform{'name'} = $packageInfo{'platform'};
-    }else{
-      my $pkgUrl = URI->new($packageInfo{'url'});
-      my $pkgScheme = $pkgUrl->scheme;
-      my $pkgHost = $pkgUrl->host;
-
-      my $urlName = lc (substr($pkgHost, 0, 3) eq 'www' ? substr($pkgHost, 4) : $pkgHost);
-
-      $pkgPlatform{'name'} = $urlName;
-    }
+    $pkgPlatform{'name'} = $urlName;
   }
 
   my %pkgSource;
@@ -1234,22 +1261,33 @@ sub processPackage {
       name => "GVK-SRU",
       normname => "GVK_SRU"
     );
-  }elsif($endpoint eq 'zdb'){
+  }
+  elsif($endpoint eq 'zdb'){
     %pkgSource = (
       url => "http://www.zeitschriftendatenbank.de",
       name => "ZDB - Zeitschriftendatenbank"
     );
-  }elsif($endpoint eq 'natliz'){
+  }
+  elsif($endpoint eq 'natliz'){
     %pkgSource = (
       url => "http://sru.gbv.de/natliz",
       name => "Natliz-SRU",
       normname => "Natliz_SRU"
     );
   }
-  my $pkgNoProv = "$pkgName: $pkgType";
+  my $pkgNoProv = "$pkgName: ".($owner ne "Master" ? $owner : $pkgType);
+
+  my @curGroups = ("LAS:eR", "VZG", "ZDB");
+
+  if($pkgType eq "NL") {
+    push @curGroups, 'NL-DE';
+  }
+  elsif($pkgType eq "AL") {
+    push @curGroups, 'AL-DE';
+  }
 
   $package{'packageHeader'} = {
-    name => ($provider ?  "$provider: " : "")."$pkgName: $pkgType",
+    name => ($provider ?  "$provider: " : "")."$pkgName: ".($owner ne "Master" ? $owner : $pkgType),
     identifiers => [{ type => "isil", value => $packageInfo{'sigel'} }],
     additionalProperties => [],
     variantNames => [$provider ne "" ? $pkgNoProv : ""],
@@ -1267,7 +1305,7 @@ sub processPackage {
     nominalProvider => $provider,
     listVerifiedDate => $listVerDate,
     source => \%pkgSource,
-    curatoryGroups => ["LAS:eR", "VZG", "ZDB"],
+    curatoryGroups => \@curGroups,
   };
 
   $package{'tipps'} = [];
@@ -1364,7 +1402,7 @@ sub processPackage {
 #   };
 
   $attrsScopes{'gvk'}{'book'} = {
-    query => 'pica.xpr='.$packageInfo{'sigel'}.' and pica.mak=Oa* sortBy year/sort.ascending',
+    query => 'pica.xpr='.$packageInfo{'sigel'}.' and pica.mak=Oa*',
     base => 'http://sru.gbv.de/gvk',
     recordSchema => 'picatitle',
     parser => 'picaxml',
@@ -1372,7 +1410,7 @@ sub processPackage {
   };
 
   $attrsScopes{'gvk'}{'journal'} = {
-    query => 'pica.xpr='.$packageInfo{'sigel'}.' and (pica.mak=Ob* or pica.mak=Od*) sortBy year/sort.ascending',
+    query => 'pica.xpr='.$packageInfo{'sigel'}.' and (pica.mak=Ob* or pica.mak=Od*)',
     base => 'http://sru.gbv.de/gvk',
     recordSchema => 'picatitle',
     parser => 'picaxml',
@@ -1380,7 +1418,7 @@ sub processPackage {
   };
 
   $attrsScopes{'gvk'}{'all'} = {
-    query => 'pica.xpr='.$packageInfo{'sigel'}.' and pica.mak=O* sortBy year/sort.ascending',
+    query => 'pica.xpr='.$packageInfo{'sigel'}.' and pica.mak=O*',
     base => 'http://sru.gbv.de/gvk',
     recordSchema => 'picatitle',
     parser => 'picaxml',
@@ -1388,7 +1426,7 @@ sub processPackage {
   };
 
   $attrsScopes{'gbvcat'}{'book'} = {
-    query => 'pica.xpr='.$packageInfo{'sigel'}.' and pica.mak=Oa* sortBy year/sort.ascending',
+    query => 'pica.xpr='.$packageInfo{'sigel'}.' and pica.mak=Oa*',
     base => 'http://sru.gbv.de/gbvcat',
     recordSchema => 'picatitle',
     parser => 'picaxml',
@@ -1396,7 +1434,7 @@ sub processPackage {
   };
 
   $attrsScopes{'gbvcat'}{'journal'} = {
-    query => 'pica.xpr='.$packageInfo{'sigel'}.' and (pica.mak=Ob* or pica.mak=Od*) sortBy year/sort.ascending',
+    query => 'pica.xpr='.$packageInfo{'sigel'}.' and (pica.mak=Ob* or pica.mak=Od*)',
     base => 'http://sru.gbv.de/gbvcat',
     recordSchema => 'picatitle',
     parser => 'picaxml',
@@ -1404,15 +1442,15 @@ sub processPackage {
   };
 
   $attrsScopes{'gbvcat'}{'all'} = {
-    query => 'pica.xpr='.$packageInfo{'sigel'}.'  and pica.mak=O* sortBy year/sort.ascending',
+    query => 'pica.xpr='.$packageInfo{'sigel'}.'  and pica.mak=O*',
     base => 'http://sru.gbv.de/gbvcat',
     recordSchema => 'picatitle',
     parser => 'picaxml',
     _max_results => 3
   };
 
-  $attrsScopes{'zdb'}{'all'} = {
-    query => 'pica.xpr='.$packageInfo{'sigel'}.'  and pica.mak=O* sortBy year/sort.ascending',
+  $attrsScopes{'zdb'}{'journal'} = {
+    query => 'dnb.psg='.$packageInfo{'sigel'}.'  and dnb.frm=O',
     base => 'http://services.dnb.de/sru/zdb',
     recordSchema => 'PicaPlus-xml',
     parser => 'ppxml',
@@ -1420,7 +1458,7 @@ sub processPackage {
   };
 
   $attrsScopes{'zdb'}{'all'} = {
-    query => 'pica.xpr='.$packageInfo{'sigel'}.'  and pica.mak=O* sortBy year/sort.ascending',
+    query => 'dnb.psg='.$packageInfo{'sigel'}.'  and dnb.frm=O',
     base => 'http://services.dnb.de/sru/zdb',
     recordSchema => 'PicaPlus-xml',
     parser => 'ppxml',
@@ -1428,7 +1466,7 @@ sub processPackage {
   };
 
   $attrsScopes{'natliz'}{'book'} = {
-    query => 'pica.xpr='.$packageInfo{'sigel'}.' and pica.mak=Oa* sortBy year/sort.ascending',
+    query => 'pica.xpr='.$packageInfo{'sigel'}.' and pica.mak=Oa*',
     base => 'http://sru.gbv.de/natliz',
     recordSchema => 'picatitle',
     parser => 'picaxml',
@@ -1436,7 +1474,7 @@ sub processPackage {
   };
 
   $attrsScopes{'natliz'}{'journal'} = {
-    query => 'pica.xpr='.$packageInfo{'sigel'}.' and (pica.mak=Ob* or pica.mak=Od*) sortBy year/sort.ascending',
+    query => 'pica.xpr='.$packageInfo{'sigel'}.' and (pica.mak=Ob* or pica.mak=Od*)',
     base => 'http://sru.gbv.de/natlizzss',
     recordSchema => 'picatitle',
     parser => 'picaxml',
@@ -1444,7 +1482,7 @@ sub processPackage {
   };
 
   $attrsScopes{'natliz'}{'database'} = {
-    query => 'pica.xpr='.$packageInfo{'sigel'}.' and (pica.mak=Ob* or pica.mak=Od*) sortBy year/sort.ascending',
+    query => 'pica.xpr='.$packageInfo{'sigel'}.' and (pica.mak=Ob* or pica.mak=Od*)',
     base => 'http://sru.gbv.de/natlizfak',
     recordSchema => 'picatitle',
     parser => 'picaxml',
@@ -1455,7 +1493,8 @@ sub processPackage {
     push @toQuery, $attrsScopes{$endpoint}{'book'};
     push @toQuery, $attrsScopes{$endpoint}{'journal'};
     push @toQuery, $attrsScopes{$endpoint}{'database'};
-  } else {
+  }
+  else {
     push @toQuery, $attrsScopes{$endpoint}{$requestedType};
   }
       
@@ -1470,7 +1509,8 @@ sub processPackage {
         $currentTitle++;
         if(pica_value($titleRecord, '006Z0')){
           $logger->info("Verarbeite Titel ".($currentTitle)." von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '006Z0').")");
-        }else{
+        }
+        else{
           $logger->info("Verarbeite Titel ".($currentTitle)." von Paket ".$packageInfo{'sigel'}." (".pica_value($titleRecord, '003@0').")");
         }
 
@@ -1544,10 +1584,12 @@ sub processTitle {
   if($isJournal){
     $gokbType = "Serial";
     $gokbMedium = "Journal";
-  }elsif($typeChar eq 'a'){
+  }
+  elsif($typeChar eq 'a'){
     $gokbType = "Monograph";
     $gokbMedium = "Book";
-  }else{
+  }
+  else{
     $logger->error("Kann Materialtyp für $ppn nicht bestimmen...");
     return \@tipps, \%titleStats, \%titleWarnings, \%titleInfo;
   }
@@ -1557,27 +1599,30 @@ sub processTitle {
   $titleInfo{'identifiers'} = [];
 
   ## PPN
-  if($activeSource eq "gvk"){
-    push @{ $titleInfo{'identifiers'} } , {
-      'type' => "gvk_ppn",
-      'value' => $ppn
-    };
-  }elsif($activeSource eq "zdb"){
-    push @{ $titleInfo{'identifiers'} } , {
-      'type' => "zdb_ppn",
-      'value' => $ppn
-    };
-  }elsif($activeSource eq "natliz"){
-    push @{ $titleInfo{'identifiers'} } , {
-      'type' => "natliz_ppn",
-      'value' => $ppn
-    };
-  }elsif($activeSource eq "gbvcat"){
-    push @{ $titleInfo{'identifiers'} } , {
-      'type' => "gbvcat_ppn",
-      'value' => $ppn
-    };
-  }
+#   if($activeSource eq "gvk"){
+#     push @{ $titleInfo{'identifiers'} } , {
+#       'type' => "gvk_ppn",
+#       'value' => $ppn
+#     };
+#   }
+#   elsif($activeSource eq "zdb"){
+#     push @{ $titleInfo{'identifiers'} } , {
+#       'type' => "zdb_ppn",
+#       'value' => $ppn
+#     };
+#   }
+#   elsif($activeSource eq "natliz"){
+#     push @{ $titleInfo{'identifiers'} } , {
+#       'type' => "natliz_ppn",
+#       'value' => $ppn
+#     };
+#   }
+#   elsif($activeSource eq "gbvcat"){
+#     push @{ $titleInfo{'identifiers'} } , {
+#       'type' => "gbvcat_ppn",
+#       'value' => $ppn
+#     };
+#   }
 
   ## DOI
 
@@ -1585,7 +1630,8 @@ sub processTitle {
 
   if($activeSource eq "gvk" || $activeSource eq "natliz" || $activeSource eq "gbvcat"){
     $doi = pica_value($titleRecord, '004V0');
-  }else{
+  }
+  else{
     $doi = pica_value($titleRecord, '004P0');
   }
 
@@ -1597,7 +1643,8 @@ sub processTitle {
 
     if($titleStats{'doi'}){
       $titleStats{'doi'}++;
-    }else{
+    }
+    else{
       $titleStats{'doi'} = 1;
     }
   }
@@ -1622,11 +1669,13 @@ sub processTitle {
           'type' => "zdb",
           'value' => $id
         };
-      }else{
+      }
+      else{
         $id = $ppn;
         $logger->warn("Konnte ZDB-ID in Titel $ppn nicht validieren!");
       }
-    }else{
+    }
+    else{
       $logger->warn("Titel mit ppn $ppn hat keine ZDB-ID! Überspringe Titel..");
 
       push @{ $titleWarnings{'all'} }, {
@@ -1673,7 +1722,8 @@ sub processTitle {
                 '005A0' => $eissnValue[$subfPos+1],
                 'comment' => 'ISSN konnte nicht validiert werden.'
               };
-            }elsif($globalIDs{$id} && none {$_ eq $eissn} @globalIssns){
+            }
+            elsif($globalIDs{$id} && none {$_ eq $eissn} @globalIssns){
               $logger->warn("eISSN $eissn kommt in bereits erschlossenem Titel $id nicht vor!");
 
               push @{ $titleWarnings{'all'} }, {
@@ -1685,7 +1735,8 @@ sub processTitle {
                 '005A0' => $eissn,
                 'comment' => 'ISSN bei gleicher ZDB-ID nicht vergeben?'
               };
-            }else{
+            }
+            else{
               push @eissn, $eissn;
 
               push @{ $titleInfo{'identifiers'}} , {
@@ -1715,10 +1766,12 @@ sub processTitle {
           $subfPos++;
         }
       }
-    }else{
+    }
+    else{
       if($titleStats{'noISXN'}){
         $titleStats{'noISXN'}++;
-      }else{
+      }
+      else{
         $titleStats{'noISXN'} = 1;
       }
     }
@@ -1746,7 +1799,8 @@ sub processTitle {
               push @{ $titleWarnings{'zdb'} }, {
                 '005P0' => $issnValue[$subfPos+1]
               };
-            }else{
+            }
+            else{
 
               if($allISSN{$pissn}){
                 print "Parallel-ISSN $pissn";
@@ -1754,7 +1808,8 @@ sub processTitle {
 
                 if($titleStats{'wrongISSN'}){
                   $titleStats{'wrongISSN'}++;
-                }else{ 
+                }
+                else{
                   $titleStats{'wrongISSN'} = 1;
                 }
 
@@ -1781,7 +1836,8 @@ sub processTitle {
       }
     }
 
-  }elsif($gokbMedium eq "Book"){
+  }
+  elsif($gokbMedium eq "Book"){
     $id = $ppn;
     my $numIsbn = 0;
 
@@ -1800,7 +1856,8 @@ sub processTitle {
             if(!$isbn){
               $isbn = $isbnValue[$subfPos+1];
               $isbn =~ s/-\s//g;
-            }else{
+            }
+            else{
               $logger->error("Mehrere ISBNs in einem PICA-Feld!");
             }
           }
@@ -1823,11 +1880,13 @@ sub processTitle {
     if($numIsbn == 0) {
       if($titleStats{'noISXN'}){
         $titleStats{'noISXN'}++;
-      }else{
+      }
+      else{
         $titleStats{'noISXN'} = 1;
       }
     }
-  }else{
+  }
+  else{
     $logger->error("Kann Materialtyp für $ppn nicht bestimmen...");
     return \@tipps, \%titleStats, \%titleWarnings, \%titleInfo;
   }
@@ -1874,7 +1933,8 @@ sub processTitle {
     }
     $titleInfo{'name'} = $titleField;
     
-  }elsif(pica_value($titleRecord, '021Aa')){
+  }
+  elsif(pica_value($titleRecord, '021Aa')){
     my $titleField = pica_value($titleRecord, '021Aa');
 
     if($titleField =~ /@/){
@@ -1886,7 +1946,8 @@ sub processTitle {
       $titleInfo{'name'} .= " - ".pica_value($titleRecord, '021Ad');
     }
     
-  }else{
+  }
+  else{
     $logger->info("Keinen Titel für ".$ppn." erkannt, überspringe Titel!");
 
     push @{ $titleWarnings{'all'} }, {
@@ -1970,7 +2031,8 @@ sub processTitle {
       if($subField eq 'j'){
         if($releaseStart{'year'} ne ""){
           $releaseStart{'year'} = substr($releaseNote[$subfPos+1],0,4);
-        }else{
+        }
+        else{
           if($releaseEnd{'year'} ne ""){
             $releaseEnd{'year'} = "";
             $releaseEnd{'month'} = "";
@@ -1979,23 +2041,32 @@ sub processTitle {
             $releaseEnd{'issue'} = "";
           }
         }
-      }elsif($subField eq 'c' && $releaseStart{'month'} ne ""){
+      }
+      elsif($subField eq 'c' && $releaseStart{'month'} ne ""){
         $releaseStart{'month'} = $releaseNote[$subfPos+1];
-      }elsif($subField eq 'b' && $releaseStart{'day'} ne ""){
+      }
+      elsif($subField eq 'b' && $releaseStart{'day'} ne ""){
         $releaseStart{'day'} = $releaseNote[$subfPos+1];
-      }elsif($subField eq 'd' && $releaseStart{'volume'} ne ""){
+      }
+      elsif($subField eq 'd' && $releaseStart{'volume'} ne ""){
         $releaseStart{'volume'} = $releaseNote[$subfPos+1];
-      }elsif($subField eq 'e' && $releaseStart{'issue'} ne ""){
+      }
+      elsif($subField eq 'e' && $releaseStart{'issue'} ne ""){
         $releaseStart{'issue'} = $releaseNote[$subfPos+1];
-      }elsif($subField eq 'k'){
+      }
+      elsif($subField eq 'k'){
         $releaseEnd{'year'} = substr($releaseNote[$subfPos+1],0,4);
-      }elsif($subField eq 'm' && !$releaseEnd{'month'}){
+      }
+      elsif($subField eq 'm' && !$releaseEnd{'month'}){
         $releaseEnd{'month'} = $releaseNote[$subfPos+1];
-      }elsif($subField eq 'l' && !$releaseEnd{'day'}){
+      }
+      elsif($subField eq 'l' && !$releaseEnd{'day'}){
         $releaseEnd{'day'} = $releaseNote[$subfPos+1];
-      }elsif($subField eq 'n' && !$releaseEnd{'volume'}){
+      }
+      elsif($subField eq 'n' && !$releaseEnd{'volume'}){
         $releaseEnd{'volume'} = $releaseNote[$subfPos+1];
-      }elsif($subField eq 'o' && !$releaseEnd{'issue'}){
+      }
+      elsif($subField eq 'o' && !$releaseEnd{'issue'}){
         $releaseEnd{'issue'} = $releaseNote[$subfPos+1];
       }
 
@@ -2014,7 +2085,8 @@ sub processTitle {
 
   if(pica_value($titleRecord, '011@a')){
     $start_year = pica_value($titleRecord, '011@a');
-  }elsif($releaseStart{'year'} ne ""){
+  }
+  elsif($releaseStart{'year'} ne ""){
     $start_year = $releaseStart{'year'};
   }
 
@@ -2024,7 +2096,8 @@ sub processTitle {
     ){
       $end_year = pica_value($titleRecord, '011@b');
     }
-  }elsif($releaseEnd{'year'} ne ""){
+  }
+  elsif($releaseEnd{'year'} ne ""){
     if($start_year != 0 && $releaseEnd{'year'} >= $start_year ){
       $end_year = $releaseEnd{'year'};
     }
@@ -2067,8 +2140,9 @@ sub processTitle {
     $titleInfo{'publishedFrom'} = convertToTimeStamp($dts[0][0], 0);
 
     $titleInfo{'publishedTo'} = convertToTimeStamp($dts[0][1], 1);
-  }else{
-    $titleInfo{'dateFirstOnline'} = convertToTimeStamp($dts[0][0], 0);
+  }
+  else{
+    $titleInfo{'dateFirstInPrint'} = convertToTimeStamp($dts[0][0], 0);
   }
 
   # -------------------- Publisher --------------------
@@ -2084,7 +2158,8 @@ sub processTitle {
   
   if($activeSource eq "gvk" || $activeSource eq "gbvcat"){
     @gndPubs = @{ pica_fields($titleRecord, '029G') };
-  }elsif($activeSource eq "zdb"){
+  }
+  elsif($activeSource eq "zdb"){
     @gndPubs = @{ pica_fields($titleRecord, '029A') };
   }
   
@@ -2095,7 +2170,8 @@ sub processTitle {
   if(!$checkPubs){
     if($titleStats{'noPublisher'}){
       $titleStats{'noPublisher'}++;
-    }else{
+    }
+    else{
       $titleStats{'noPublisher'} = 1;
     }
   }
@@ -2123,13 +2199,15 @@ sub processTitle {
                 '033(A/B)' => \@pub,
                 'comment' => "Mehrere Verlage in einem PICA-Feld!"
               };
-            }elsif($activeSource eq "zdb"){
+            }
+            elsif($activeSource eq "zdb"){
               push @{ $titleWarnings{'zdb'} }, {
                 '033(A/B)' => \@pub,
                 'comment' => "Mehrere Verlage in einem PICA-Feld!"
               };
             }
-          } else {
+          }
+          else {
             $preCorrectedPub = $pub[$subfPos+1];
             $tempPub = $pub[$subfPos+1];
             $logger->debug("Verlagsangabe: $tempPub");
@@ -2155,9 +2233,11 @@ sub processTitle {
 
           if($tempStart && looks_like_number($tempStart)) {
             $pubStart = convertToTimeStamp($tempStart, 0);
-          }elsif($titleInfo{'publishedFrom'}){
+          }
+          elsif($titleInfo{'publishedFrom'}){
             $pubStart = $titleInfo{'publishedFrom'}
-          }elsif($titleInfo{'dateFirstOnline'}) {
+          }
+          elsif($titleInfo{'dateFirstOnline'}) {
             $pubStart = $titleInfo{'dateFirstOnline'}
           }
 
@@ -2188,7 +2268,8 @@ sub processTitle {
         
         if($titleStats{'correctedAbbrs'}){
           $titleStats{'correctedAbbrs'}++;
-        }else{ 
+        }
+        else{
           $titleStats{'correctedAbbrs'} = 1;
         }
       }
@@ -2198,7 +2279,8 @@ sub processTitle {
         $tempPub =~ s/(^|\s)([Aa]ssoc)\.?(\s|$)/$1Association$3/g;
         if($titleStats{'correctedAbbrs'}){
           $titleStats{'correctedAbbrs'}++;
-        }else{ 
+        }
+        else{
           $titleStats{'correctedAbbrs'} = 1;
         }
       }
@@ -2208,7 +2290,8 @@ sub processTitle {
         $tempPub =~ s/(^|\s)([Ss]oc)\.?(\s|$)/$1Society$3/g;
         if($titleStats{'correctedAbbrs'}){
           $titleStats{'correctedAbbrs'}++;
-        }else{ 
+        }
+        else{
           $titleStats{'correctedAbbrs'} = 1;
         }
       }
@@ -2218,7 +2301,8 @@ sub processTitle {
         $tempPub =~ s/(^|\s)([Uu]niv)\.?(\s|$)/$1University$3/g;
         if($titleStats{'correctedAbbrs'}){
           $titleStats{'correctedAbbrs'}++;
-        }else{ 
+        }
+        else{
           $titleStats{'correctedAbbrs'} = 1;
         }
       }
@@ -2228,7 +2312,8 @@ sub processTitle {
         $tempPub =~ s/(^|\s)([Aa]cad)\.?(\s|$)/$1Academic$3/g;
         if($titleStats{'correctedAbbrs'}){
           $titleStats{'correctedAbbrs'}++;
-        }else{ 
+        }
+        else{
           $titleStats{'correctedAbbrs'} = 1;
         }
       }
@@ -2238,7 +2323,8 @@ sub processTitle {
         $tempPub =~ s/(^|\s)([Vv]erl)\.?(\s|$)/$1Verlag$3/g;
         if($titleStats{'correctedAbbrs'}){
           $titleStats{'correctedAbbrs'}++;
-        }else{ 
+        }
+        else{
           $titleStats{'correctedAbbrs'} = 1;
         }
       }
@@ -2248,7 +2334,8 @@ sub processTitle {
         $tempPub =~ s/(^|\s)([Aa]kad)\.?(\s|$)/$1Akademie$3/g;
         if($titleStats{'correctedAbbrs'}){
           $titleStats{'correctedAbbrs'}++;
-        }else{ 
+        }
+        else{
           $titleStats{'correctedAbbrs'} = 1;
         }
       }
@@ -2258,7 +2345,8 @@ sub processTitle {
         $tempPub =~ s/(^|\s)([Vv]erb)\.?(\s|$)/$1Verband$3/g;
         if($titleStats{'correctedAbbrs'}){
           $titleStats{'correctedAbbrs'}++;
-        }else{ 
+        }
+        else{
           $titleStats{'correctedAbbrs'} = 1;
         }
       }
@@ -2274,13 +2362,15 @@ sub processTitle {
             'endDate' => $pubEnd ? $pubEnd : "",
             'status' => "Active"
         };
-      }elsif(!$ncsuPub
+      }
+      elsif(!$ncsuPub
         || $tempPub =~ /[\[\]]/
         || $tempPub =~ /u\.\s?a\./
       ){
         if($titleStats{'noPublisherMatch'}){
           $titleStats{'noPublisherMatch'}++;
-        }else{
+        }
+        else{
           $titleStats{'noPublisherMatch'} = 1;
         }
 
@@ -2323,18 +2413,22 @@ sub processTitle {
                 '029Aa' => $pubName,
                 'comment' => "GND-Org ist nicht in der GOKb vorhanden."
               };
-            }else{
+            }
+            else{
               push @{ $titleWarnings{'all'} }, {
                 '029Ga' => $pubName,
                 'comment' => "GND-Org ist nicht in der GOKb vorhanden."
               };
             }
           }
-        }elsif($subField eq 'M' || $subField eq '7'){
+        }
+        elsif($subField eq 'M' || $subField eq '7'){
           $authType = substr($pub[$subfPos+1],0,2);
-        }elsif($subField eq '0'){
+        }
+        elsif($subField eq '0'){
           $gndID = $pub[$subfPos+1];
-        }elsif($subField eq 'b'){
+        }
+        elsif($subField eq 'b'){
           $branch = $pub[$subfPos+1];
           $isParent = 1;
         }
@@ -2348,7 +2442,8 @@ sub processTitle {
             '029A' => \@pub,
             'comment' => "GND-Org ist nicht eigenständig."
           };
-        }else{
+        }
+        else{
           push @{ $titleWarnings{'all'} }, {
             '029G' => \@pub,
             'comment' => "GND-Org ist nicht eigenständig."
@@ -2381,7 +2476,8 @@ sub processTitle {
 
           if($titleStats{'pubFromGnd'}){
             $titleStats{'pubFromGnd'}++;
-          }else{
+          }
+          else{
             $titleStats{'pubFromGnd'} = 1;
           }
         }
@@ -2405,12 +2501,14 @@ sub processTitle {
 
         if($titleStats{'pubFromCorp'}){
           $titleStats{'pubFromCorp'}++;
-        }else{
+        }
+        else{
           $titleStats{'pubFromCorp'} = 1;
         }
       }
       # print "Used author $authorField as publisher.\n";
-    }elsif($authorField){
+    }
+    elsif($authorField){
       my $ncsuAuthor = matchExistingOrgs($authorField);
 
       if($ncsuAuthor){
@@ -2423,12 +2521,14 @@ sub processTitle {
 
         if($titleStats{'pubFromAuthor'}){
           $titleStats{'pubFromAuthor'}++;
-        }else{
+        }
+        else{
           $titleStats{'pubFromAuthor'} = 1;
         }
       }
       # print "Used author $authorField as publisher.\n";
-    }elsif($corpField){
+    }
+    elsif($corpField){
       my $ncsuCorp = matchExistingOrgs($corpField);
 
       if($ncsuCorp){
@@ -2440,7 +2540,8 @@ sub processTitle {
         };
         if($titleStats{'pubFromCorp'}){
           $titleStats{'pubFromCorp'}++;
-        }else{
+        }
+        else{
           $titleStats{'pubFromCorp'} = 1;
         }
       }
@@ -2477,21 +2578,25 @@ sub processTitle {
 
           $altRelationType = $relTitle[$subfPos+1];
 
-        }elsif($subField eq 'b'){
+        }
+        elsif($subField eq 'b'){
 
           $relationType = $relTitle[$subfPos+1];
 
-        }elsif($subField eq 'ZDB' && $relTitle[$subfPos+1] eq '6'){
+        }
+        elsif($subField eq 'ZDB' && $relTitle[$subfPos+1] eq '6'){
           my $oID = formatZdbId($relTitle[$subfPos+2]);
 
           if($oID){
             $relatedID = $oID;
           }
-        }elsif($subField eq 't' || $subField eq 'a'){
+        }
+        elsif($subField eq 't' || $subField eq 'a'){
 
           $relName = $relTitle[$subfPos+1];
 
-        }elsif($subField eq 'f' || $subField eq 'd'){
+        }
+        elsif($subField eq 'f' || $subField eq 'd'){
           my $cleanedRelDates = $relTitle[$subfPos+1] =~ s/\[\]//g;
           my ($tempStartYear) = $cleanedRelDates =~ /([0-9]{4})\s?-/;
           my ($tempEndYear) = $cleanedRelDates =~ /-\s?([0-9]{4})[^\.]?/;
@@ -2510,7 +2615,8 @@ sub processTitle {
               };
               if($titleStats{'relDatesInD'}){
                 $titleStats{'relDatesInD'}++;
-              }else{
+              }
+              else{
                 $titleStats{'relDatesInD'} = 1;
               }
             }
@@ -2530,7 +2636,8 @@ sub processTitle {
               
               if($titleStats{'relDatesInD'}){
                 $titleStats{'relDatesInD'}++;
-              }else{
+              }
+              else{
                 $titleStats{'relDatesInD'} = 1;
               }
             }
@@ -2550,7 +2657,8 @@ sub processTitle {
             }
           }
         }
-      }elsif($activeSource eq "zdb"){
+      }
+      elsif($activeSource eq "zdb"){
         if($subField eq 'b'){
           $relationType = $relTitle[$subfPos+1];
         }
@@ -2575,7 +2683,8 @@ sub processTitle {
           my $tempStartYear;
           if($cleanedRelDates =~ /^[0-9]{4}$/){
             $tempStartYear = $cleanedRelDates;
-          }else{
+          }
+          else{
             $tempStartYear = $cleanedRelDates =~ /([0-9]{4})\s?-/;
           }
           my ($tempEndYear) = $cleanedRelDates =~ /-\s?([0-9]{4})[^\.]?/;
@@ -2605,7 +2714,8 @@ sub processTitle {
     if($relatedID){
       if($titleStats{'possibleRelations'}){
         $titleStats{'possibleRelations'}++;
-      }else{
+      }
+      else{
         $titleStats{'possibleRelations'} = 1;
       }
 
@@ -2636,7 +2746,8 @@ sub processTitle {
           $relAttrs{'base'} = 'http://sru.gbv.de/gbvcat'
         }
 
-      }elsif($activeSource eq "zdb"){
+      }
+      elsif($activeSource eq "zdb"){
         my $relQryString = 'dnb.zdbid='.$relatedID;
 
         %relAttrs = (
@@ -2646,7 +2757,8 @@ sub processTitle {
           parser => 'ppxml',
           _max_results => 1
         );
-      }elsif($activeSource eq "natliz"){
+      }
+      elsif($activeSource eq "natliz"){
         my $relQryString = 'pica.zdb='.$relatedID;
 
         %relAttrs = (
@@ -2679,11 +2791,12 @@ sub processTitle {
               }
             }
           }
-          push @{ $relObj{'identifiers'} } , {
-            'type' => "gvk_ppn",
-            'value' => $relPPN
-          };
-        }elsif($activeSource eq "zdb"){
+#           push @{ $relObj{'identifiers'} } , {
+#             'type' => "gvk_ppn",
+#             'value' => $relPPN
+#           };
+        }
+        elsif($activeSource eq "zdb"){
           if(pica_value($relRecord, '017B')){
             my @relISIL = pica_values($relRecord, '017B');
 
@@ -2693,10 +2806,10 @@ sub processTitle {
               }
             }
           }
-          push @{ $relObj{'identifiers'} } , {
-            'type' => "zdb_ppn",
-            'value' => $relPPN
-          };
+#           push @{ $relObj{'identifiers'} } , {
+#             'type' => "zdb_ppn",
+#             'value' => $relPPN
+#           };
         }
         if(pica_value($relRecord, '039E')){
           my @relRelatedTitles = @{ pica_fields($relRecord, '039E') };
@@ -2714,7 +2827,8 @@ sub processTitle {
                     $isDirectRelation = 1;
                   }
                 }
-              }elsif($activeSource eq "zdb"){
+              }
+              elsif($activeSource eq "zdb"){
                 if($subField eq '0'){
                   my $rID = formatZdbId($rt[$rSubfPos+1]);
 
@@ -2732,7 +2846,8 @@ sub processTitle {
             if(index($relName, '@') <= 5){
               $relName =~ s/@//;
             }
-          }elsif(pica_value($relRecord, '021Aa')){
+          }
+          elsif(pica_value($relRecord, '021Aa')){
             $relName = pica_value($relRecord, '021Aa');
             if(index($relName, '@') <= 5){
               $relName =~ s/@//;
@@ -2746,7 +2861,8 @@ sub processTitle {
             if(pica_value($relRecord, '004V0')){
               push @{ $relObj{'identifiers'} }, { 'type' => "doi", 'value' => pica_value($relRecord, '004V0') };
             }
-          }elsif(pica_value($relRecord, '004P0')){
+          }
+          elsif(pica_value($relRecord, '004P0')){
             push @{ $relObj{'identifiers'} }, { 'type' => "doi", 'value' => pica_value($relRecord, '004P0') };
           }
 
@@ -2800,7 +2916,8 @@ sub processTitle {
         ){
           @connectedIDs = @{ $globalIDs{$relatedID}{'connected'} };
         }
-      }else{
+      }
+      else{
         $logger->debug("did not find related record!");
 
         push @{ $titleWarnings{'all'} }, {
@@ -2829,7 +2946,8 @@ sub processTitle {
       if($relRecord && $relIsNl == 0){
         if($titleStats{'nonNlRelation'}){
           $titleStats{'nonNlRelation'}++;
-        }else{
+        }
+        else{
           $titleStats{'nonNlRelation'} = 1;
         }
         $logger->debug("Related title not in known packages: $relatedID!");
@@ -2864,10 +2982,12 @@ sub processTitle {
         
         if($titleStats{'usefulRelated'}){
           $titleStats{'usefulRelated'}++;
-        }else{
+        }
+        else{
           $titleStats{'usefulRelated'} = 1;
         }
-      }elsif(any { $_ eq $relationType } @procedingTypes){
+      }
+      elsif(any { $_ eq $relationType } @procedingTypes){
         push @{ $titleInfo{'historyEvents'} } , {
             'date' => convertToTimeStamp(($rStartYear ? $rStartYear : $end_year), ($rStartYear ? 0 : 1)),
             'to' => [\%relObj],
@@ -2879,10 +2999,12 @@ sub processTitle {
         $logger->debug("Added relation!");
         if($titleStats{'usefulRelated'}){
           $titleStats{'usefulRelated'}++;
-        }else{
+        }
+        else{
           $titleStats{'usefulRelated'} = 1;
         }
-      }elsif($rStartYear){
+      }
+      elsif($rStartYear){
         $logger->debug("Trying to add by dates!");
         if($rEndYear){
           if($rEndYear < $start_year){ # Vorg.
@@ -2896,10 +3018,12 @@ sub processTitle {
             };
             if($titleStats{'usefulRelated'}){
               $titleStats{'usefulRelated'}++;
-            }else{
+            }
+            else{
               $titleStats{'usefulRelated'} = 1;
             }
-          }else{
+          }
+          else{
             if($end_year != 0){
               if($rEndYear <= $end_year){ # Vorg.
                 push @{ $titleInfo{'historyEvents'} } , {
@@ -2912,10 +3036,12 @@ sub processTitle {
                 };
                 if($titleStats{'usefulRelated'}){
                   $titleStats{'usefulRelated'}++;
-                }else{
+                }
+                else{
                   $titleStats{'usefulRelated'} = 1;
                 }
-              }else{ # Nachf.
+              }
+              else{ # Nachf.
                 push @{ $titleInfo{'historyEvents'} } , {
                     'date' => convertToTimeStamp($end_year, 1),
                     'to' => [\%relObj],
@@ -2926,11 +3052,13 @@ sub processTitle {
                 };
                 if($titleStats{'usefulRelated'}){
                   $titleStats{'usefulRelated'}++;
-                }else{
+                }
+                else{
                   $titleStats{'usefulRelated'} = 1;
                 }
               }
-            }else{ # Vorg.
+            }
+            else{ # Vorg.
               push @{ $titleInfo{'historyEvents'} } , {
                   'date' => convertToTimeStamp($rEndYear, 1),
                   'from' => [\%relObj],
@@ -2942,13 +3070,15 @@ sub processTitle {
               
               if($titleStats{'usefulRelated'}){
                 $titleStats{'usefulRelated'}++;
-              }else{
+              }
+              else{
                 $titleStats{'usefulRelated'} = 1;
               }
             }
           }
           $logger->debug("Added relation!");
-        }else{
+        }
+        else{
           if($end_year != 0){ # Nachf.
             push @{ $titleInfo{'historyEvents'} } , {
                 'date' => convertToTimeStamp($end_year, 1),
@@ -2961,7 +3091,8 @@ sub processTitle {
             
             if($titleStats{'usefulRelated'}){
               $titleStats{'usefulRelated'}++;
-            }else{
+            }
+            else{
               $titleStats{'usefulRelated'} = 1;
             }
             
@@ -2976,13 +3107,15 @@ sub processTitle {
               };
             }
             $logger->debug("Added relation!");
-          }else{
+          }
+          else{
             $logger->warn("Konnte Verknüpfungstyp in $id nicht identifizieren:");
             $logger->warn("Titel: $start_year-".($end_year != 0 ? $end_year : ""));
             $logger->warn("Verknüpft: ".($rStartYear ? $rStartYear : "")."-".($rEndYear ? $rEndYear : ""));
           }
         }
-      }else{
+      }
+      else{
         $logger->warn("Konnte Verknüpfungstyp in $id nicht identifizieren:");
         $logger->warn("Titel $id: $start_year-".($end_year != 0 ? $end_year : ""));
         $logger->warn("Verknüpft $relatedID: ".($rStartYear ? $rStartYear : "")."-".($rEndYear ? $rEndYear : ""));
@@ -3004,9 +3137,11 @@ sub processTitle {
     if(pica_value($titleRecord, '009P[05]')){
       push @onlineSources, @{pica_fields($titleRecord, '009P[05]')};
     }
-  }elsif($activeSource eq "zdb"){
+  }
+  elsif($activeSource eq "zdb"){
     @onlineSources = @{ pica_fields($titleRecord, '009Q') };
-  }elsif($activeSource eq "natliz"){
+  }
+  elsif($activeSource eq "natliz"){
     if(pica_value($titleRecord, '009Q')){
       push @onlineSources, @{ pica_fields($titleRecord, '009Q') };
     }
@@ -3045,7 +3180,8 @@ sub processTitle {
         foreach my $subField (@pkgLink){
           if ($subField eq 'p') {
             $retired = 1;
-          }elsif ($subField eq 'a') {
+          }
+          elsif ($subField eq 'a') {
             $linkedIsil = $pkgLink[$subfPos+1];
           }
         }
@@ -3058,14 +3194,16 @@ sub processTitle {
     
     if(%tippComments) {
       $tipp{'licence'} = $tippComments{'public'} ? $tippComments{'public'} : $tippComments{'licence'};
-    } else {
+    }
+    else {
       $tipp{'licence'} = 'unknown';
     }
     $tipp{'type'} = $tippComments{'internal'};
 
     if(!$tipp{'action'}){
       push @validTipps, \%tipp;
-    }elsif ($tipp{'action'} eq "skipped") {
+    }
+    elsif ($tipp{'action'} eq "skipped") {
       delete $tipp{'action'};
 
       push @skippedTipps, \%tipp;
@@ -3080,7 +3218,8 @@ sub processTitle {
     foreach my $tippStat (keys %tippStats){
       if (!$titleStats{$tippStat}){
         $titleStats{$tippStat} = $tippStats{$tippStat};
-      }else{
+      }
+      else{
         $titleStats{$tippStat} += $tippStats{$tippStat};
       }
     }
@@ -3107,7 +3246,10 @@ sub processTitle {
           $ppBase = $ppBase->authority();
         }
       }
-      $logger->debug("Base is: $ppBase");
+
+      if($ppBase) {
+        $logger->debug("Base is: $ppBase");
+      }
 
       if($ppBase) {
         my @ppBaseArray = split(/\./, $ppBase);
@@ -3119,7 +3261,8 @@ sub processTitle {
           delete $vTipp{'licence'};
           delete $vTipp{'type'};
           push @tipps, \%vTipp;
-        }elsif(scalar @ppBaseArray > 2) {
+        }
+        elsif(scalar @ppBaseArray > 2) {
           splice @ppBaseArray, 0,1;
           $ppBase = join('.', @ppBaseArray);
           $logger->debug("NO Base URL match! Trying $ppBase ..");
@@ -3130,25 +3273,30 @@ sub processTitle {
             delete $vTipp{'licence'};
             delete $vTipp{'type'};
             push @tipps, \%vTipp;
-          }else{
+          }
+          else{
             $logger->info("Could not match $ppBase and ".$vTipp{'platform'}{'name'});
 
             if(!$tippType) {
               push @skippedTipps, \%vTipp;
-            }else {
+            }
+            else {
               if (ref($remainingValidTipps{$tippType}) eq 'ARRAY'){
                 push @{$remainingValidTipps{$tippType}}, \%vTipp;
-              }else{
+              }
+              else{
                 $remainingValidTipps{$tippType} = [\%vTipp];
               }
             }
           }
-        }else{
+        }
+        else{
           $logger->info("Could not match $ppBase with ".$vTipp{'platform'}{'name'});
 
           if (ref($remainingValidTipps{$tippType}) eq 'ARRAY'){
             push @{$remainingValidTipps{$tippType}}, \%vTipp;
-          }else{
+          }
+          else{
             $remainingValidTipps{$tippType} = [\%vTipp];
           }
         }
@@ -3165,7 +3313,8 @@ sub processTitle {
           delete $svTipp{'type'};
           push @tipps, \%svTipp;
         }
-      }elsif($remainingValidTipps{'D'}){
+      }
+      elsif($remainingValidTipps{'D'}){
         $logger->info("Found valid digitisation URL(s) (type 'D')");
         foreach my $selectedValidTipp (@{$remainingValidTipps{'D'}}) {
           my %svTipp = %{$selectedValidTipp};
@@ -3174,7 +3323,8 @@ sub processTitle {
           delete $svTipp{'type'};
           push @tipps, \%svTipp;
         }
-      }elsif($remainingValidTipps{'A'}){
+      }
+      elsif($remainingValidTipps{'A'}){
         $logger->info("Found other valid agent URL(s) (type 'A')");
         foreach my $selectedValidTipp (@{$remainingValidTipps{'A'}}) {
           my %svTipp = %{$selectedValidTipp};
@@ -3183,7 +3333,8 @@ sub processTitle {
           delete $svTipp{'type'};
           push @tipps, \%svTipp;
         }
-      }elsif($remainingValidTipps{'C'}){
+      }
+      elsif($remainingValidTipps{'C'}){
         $logger->info("Found other valid archival URL(s) (type 'C')");
         foreach my $selectedValidTipp (@{$remainingValidTipps{'C'}}) {
           my %svTipp = %{$selectedValidTipp};
@@ -3192,7 +3343,8 @@ sub processTitle {
           delete $svTipp{'type'};
           push @tipps, \%svTipp;
         }
-      }elsif($remainingValidTipps{'L'}){
+      }
+      elsif($remainingValidTipps{'L'}){
         $logger->info("Found other valid long-time archival URL(s) (type 'L')");
         foreach my $selectedValidTipp (@{$remainingValidTipps{'L'}}) {
           my %svTipp = %{$selectedValidTipp};
@@ -3201,7 +3353,8 @@ sub processTitle {
           delete $svTipp{'type'};
           push @tipps, \%svTipp;
         }
-      }elsif($remainingValidTipps{'G'}){
+      }
+      elsif($remainingValidTipps{'G'}){
         $logger->info("Found other valid aggregator URL(s) (type 'G')");
         foreach my $selectedValidTipp (@{$remainingValidTipps{'G'}}) {
           my %svTipp = %{$selectedValidTipp};
@@ -3227,7 +3380,8 @@ sub processTitle {
 
         if($titleStats{'numUsedOA'}){
           $titleStats{'numUsedOA'}++;
-        }else{
+        }
+        else{
           $titleStats{'numUsedOA'} = 1;
         }
       }
@@ -3256,7 +3410,8 @@ sub processTitle {
 
     if($titleStats{'numNoUrl'}){
       $titleStats{'numNoUrl'}++;
-    }else{
+    }
+    else{
       $titleStats{'numNoUrl'} = 1;
     }
     $logger->warn("No valid URL found, adding placeholder ($id)!");
@@ -3284,7 +3439,8 @@ sub processTitle {
           'type' => $gokbType
         }
       }
-    }else{
+    }
+    else{
       push @tipps, {
         'medium' => "Electronic",
         'platform' => {
@@ -3324,7 +3480,8 @@ sub processTitle {
   }
   if($titleStats{'titlesTotal'}){
     $titleStats{'titlesTotal'}++;
-  }else{
+  }
+  else{
     $titleStats{'titlesTotal'} = 1;
   }
 
@@ -3337,12 +3494,14 @@ sub processTitle {
         'connected' => \@relatedPrev
     };
     push @allTitles , \%titleInfo;
-  }else{
+  }
+  else{
     $logger->warn("ID ".$id." ist bereits in der Titelliste vorhanden!");
 
     if($titleStats{'duplicateZDBids'}){
       $titleStats{'duplicateZDBids'}++;
-    }else{
+    }
+    else{
       $titleStats{'duplicateZDBids'} = 1;
     }
   }
@@ -3427,19 +3586,23 @@ sub processTipp {
           
         if($tippStats{'nlURLs'}){
           $tippStats{'nlURLs'}++;
-        }else{
+        }
+        else{
           $tippStats{'nlURLs'} = 1;
         }
         $sourceURL =~ s/http\/\//http:\/\//;
       }
-    }elsif($subField eq 'x'){
+    }
+    elsif($subField eq 'x'){
       $internalComments = $eSource[$subfPos+1];
 
-    }elsif($subField eq 'z'){
+    }
+    elsif($subField eq 'z'){
       $tippComments{'public'} = $eSource[$subfPos+1];
       $logger->debug("Found public comment ".$tippComments{'public'}."..");
 
-    }elsif($subField eq '4'){
+    }
+    elsif($subField eq '4'){
       $tippComments{'licence'} = $eSource[$subfPos+1];
     }
     $subfPos++;
@@ -3449,7 +3612,8 @@ sub processTipp {
     $logger->error("Skipping TIPP with no or overlong URL!");
     $tipp{'action'} = "error";
     return (\%tipp, \%tippWarnings, \%tippStats);
-  }else{
+  }
+  else{
     $logger->debug("Considering URL: $sourceURL");
   }
   
@@ -3475,7 +3639,8 @@ sub processTipp {
       $internalCommentIsValid = 1;
     }
     
-  }elsif($activeSource eq "zdb"){
+  }
+  elsif($activeSource eq "zdb"){
     while (my ($uType, $vCom) = each %validInternalComments ){
       my %vCom = %{$vCom};
 
@@ -3484,7 +3649,8 @@ sub processTipp {
         $internalCommentIsValid = 1;
       }
     }
-  }elsif($activeSource eq "natliz"){
+  }
+  elsif($activeSource eq "natliz"){
     $internalCommentIsValid = 1;
   }
 
@@ -3492,16 +3658,19 @@ sub processTipp {
     if($tippComments{'public'} ne "Deutschlandweit zugänglich" && $tippComments{'public'} ne "NL"){
       if($tippStats{'otherURLs'}){
         $tippStats{'otherURLs'}++;
-      }else{
+      }
+      else{
         $tippStats{'otherURLs'} = 1;
       }
       
       $logger->debug("Skipping NL-TIPP.. wrong Public Comment: ",$tippComments{'public'},", (internal=$internalComments)");
       $tipp{'action'} = "skipped";
-    }else{
+    }
+    else{
       if($tippStats{'nlURLs'}){
         $tippStats{'nlURLs'}++;
-      }else{
+      }
+      else{
         $tippStats{'nlURLs'} = 1;
       }
       $logger->debug("Using NL-TIPP.. Public Comment: ",$tippComments{'public'},", (internal=$internalComments)");
@@ -3519,7 +3688,8 @@ sub processTipp {
     
       if($tippStats{'otherURLs'}){
         $tippStats{'otherURLs'}++;
-      }else{
+      }
+      else{
         $tippStats{'otherURLs'} = 1;
       }
 
@@ -3527,7 +3697,8 @@ sub processTipp {
         $tipp{'paymentType'} = "OA";
       }
 
-    }else{
+    }
+    else{
       $logger->debug("Skipping TIPP .. wrong Type or source: $internalComments, ",$tippComments{'public'});
       $tipp{'action'} = "skipped";
     }
@@ -3553,7 +3724,8 @@ sub processTipp {
     if(!$host && !$tipp{'action'}){
       if($tippStats{'brokenURL'}){
         $tippStats{'brokenURL'}++;
-      }else{
+      }
+      else{
         $tippStats{'brokenURL'} = 1;
       }
       push @{ $tippWarnings{'all'} }, {
@@ -3569,14 +3741,16 @@ sub processTipp {
       $logger->error("Could not extract host of URL $url");
       $tipp{'action'} = "error";
       return (\%tipp, \%tippWarnings, \%tippStats, \%tippComments);
-    }else{
+    }
+    else{
       $hostUrl = "$scheme://$host";
 
 #       my $checkedUrl;
 # 
 #       if ($checkedUrls{$hostUrl}){
 #         $checkedUrl = $checkedUrls{$hostUrl};
-#       }else{
+#       }
+#       else{
 #         $checkedUrl = checkUrl($hostUrl);
 #         $checkedUrls{$hostUrl} = $checkedUrl;
 #       }
@@ -3584,7 +3758,8 @@ sub processTipp {
 #       if (!$checkedUrl && !$tipp{'action'}) {
 #         if($tippStats{'invalidURL'}){
 #           $tippStats{'invalidURL'}++;
-#         }else{
+#         }
+#         else{
 #           $tippStats{'invalidURL'} = 1;
 #         }
 # 
@@ -3599,12 +3774,14 @@ sub processTipp {
 #         };
 #       }
     }
-  }elsif (!$tipp{'action'}) {
+  }
+  elsif (!$tipp{'action'}) {
     $logger->warn("Looks like a wrong URL!");
     
     if($tippStats{'brokenURL'}){
       $tippStats{'brokenURL'}++;
-    }else{
+    }
+    else{
       $tippStats{'brokenURL'} = 1;
     }
     
@@ -3674,7 +3851,8 @@ sub processTipp {
 
           if($datePartPos == 0){
             $startDate = convertToTimeStamp($tempYear, 0);
-          }else{
+          }
+          else{
             $endDate = convertToTimeStamp($tempYear, 1);
           }
         }
@@ -3684,7 +3862,8 @@ sub processTipp {
         if($tempVol && $tempVol ne ""){
           if($datePartPos == 0){
             $startVol = $tempVol;
-          }else{
+          }
+          else{
             $endVol = $tempVol;
           }
         }
@@ -3693,7 +3872,8 @@ sub processTipp {
         if($tempIss && $tempIss ne ""){
           if($datePartPos == 0){
             $startIss = $tempIss;
-          }else{
+          }
+          else{
             $endIss = $tempIss;
           }
         }
@@ -3733,10 +3913,20 @@ sub postData {
   my $data = shift;
   my $endPoint = $gokbCreds{'base'}."integration/".$endPointType;
   
-  if($data && ref($data) eq 'HASH'){
+  if($data){
   
     my $json_gokb = JSON->new->utf8->canonical;
-    my %decData = %{ $data };  
+
+    my %decData;
+    my @decData;
+
+    if (ref($data) eq 'HASH') {
+      %decData = %{ $data };
+    }
+    elsif (ref($data) eq 'ARRAY') {
+      @decData = @{ $data };
+    }
+
     my $ua = LWP::UserAgent->new;
 
     $ua->timeout(7200);
@@ -3745,50 +3935,72 @@ sub postData {
 
     $req->header('content-type' => 'application/json');
     $req->authorization_basic($gokbCreds{'username'}, $gokbCreds{'password'});
-    $req->content($json_gokb->encode( \%decData ));
+
+    if(ref($data) eq 'HASH') {
+      $req->content($json_gokb->encode( \%decData ));
+    }
+    else {
+      $req->content($json_gokb->encode( \@decData ));
+    }
     
     my $resp = $ua->request($req);
 
+    my $resp_content = decode_json($resp->content);
+    my @arrayResponse;
+    my %hashResponse;
+
+    if (ref($resp_content) eq 'ARRAY') {
+      @arrayResponse = @{$resp_content};
+    }
+    else {
+      %hashResponse = %{$resp_content};
+    }
+
     if($resp->is_success){
-      my %resp_content = %{decode_json($resp->content)};
 
       if($endPointType eq 'crossReferencePackage'){
 
-        my $rspMsg = $resp_content{'message'} ? $resp_content{'message'} : "none";
+        my $rspMsg = $hashResponse{'message'} ? $hashResponse{'message'} : "none";
 
         $logger->info("Commit of package successful.");
-        $logger->info("HTTP POST result: ", $resp_content{'result'});
+        $logger->info("HTTP POST result: ", $hashResponse{'result'});
         $logger->info("HTTP POST message: ", $rspMsg);
       }
 
       return 0;
       
-    }else{
+    }
+    else{
       $logger->error("HTTP POST error code: ".$resp->code);
 
       if($resp->message){
         $logger->error("HTTP POST error message: ".$resp->message);
       }
       
-      my %resp_content;
-      
-      eval {
-      
-        %resp_content = %{decode_json($resp->content)};
-        
-        foreach my $eMessage (@{$resp_content{'errors'}}) {
-          my %eMessage = %{$eMessage};
-          $logger->error("Cause: ", $eMessage{'message'});
+      if(%hashResponse) {
+        $logger->error("HTTP POST error message:".$hashResponse{'message'});
+
+        if ($hashResponse{'errors'}) {
+          foreach my $eObj (@{$hashResponse{'errors'}}) {
+            my %eObj = %{$eObj};
+            $logger->error("Error:".$eObj{'message'});
+          }
         }
-        1;
-        
-      } or do {
-        $logger->error("Could not determine cause of error!");
-      };
+      }
+      elsif(@arrayResponse) {
+        foreach my $resObj (@arrayResponse) {
+          my %resObj = %{$resObj};
+
+          if ($resObj{'result'} eq 'ERROR') {
+            $logger->error($resObj{'message'});
+          }
+        }
+      }
       
       return $resp->code;
     }
-  }else{
+  }
+  else{
     $logger->error("Wrong endpoint or no data!");
 
     return -1;
@@ -3813,10 +4025,12 @@ sub formatISSN {
 
     if($issnChk->is_valid($issn)){
       return $issn;
-    }else{
+    }
+    else{
       return "";
     }
-  }else{
+  }
+  else{
     return "";
   }
 }
@@ -3833,7 +4047,8 @@ sub formatZdbId {
     substr($id, -1, 0, '-');
 
     return $id;
-  }else{
+  }
+  else{
     return;
   }
 }
@@ -3871,7 +4086,8 @@ sub matchExistingOrgs {
           if ($gokbNormOrg eq $normPubName) {
             $publisherMatch = $record{'name'};
             last;
-          }else{
+          }
+          else{
             foreach my $altname (@{$record{'altname'}}){
               my $gokbNormAltName = normalizeString($altname);
               if ($gokbNormAltName eq $normPubName) {
@@ -3886,7 +4102,8 @@ sub matchExistingOrgs {
         }
         if($publisherMatch) {
           $logger->debug("Matched GOKb Org $publisherMatch for given Org: $pubName");
-        }else{
+        }
+        else{
           $logger->debug("Could not find GOKb Org $pubName ..");
         }
         
@@ -3896,14 +4113,16 @@ sub matchExistingOrgs {
 #           say STDOUT "Matched Org $publisherMatch for given Org $pubName!";
 #         }
 
-      }else{
+      }
+      else{
         $logger->warn("Could not look up Org name in GOKb..");
         $logger->warn("HTTP GET error code: ".$resp->code);
         $logger->warn("HTTP GET error message: ".$resp->message);
         $logger->warn("Using ONLD.jsonld from now on..");
         $matchOrgsByFile = 1;
       }
-    }else{
+    }
+    else{
       $logger->warn("Could not find any GOKb credentials.. matching by file.");
       $matchOrgsByFile = 1;
     }
@@ -3923,7 +4142,8 @@ sub matchExistingOrgs {
 
       # Search in ncsu altLabels
 
-      }elsif($ncsuOrg{'skos:altLabel'}){
+      }
+      elsif($ncsuOrg{'skos:altLabel'}){
         foreach my $altLabel ( @{ $ncsuOrg{'skos:altLabel'} } ) {
           my $altLabelNorm = normalizeString($altLabel);
 
@@ -3939,7 +4159,8 @@ sub matchExistingOrgs {
   
   if($publisherMatch){
     return $publisherMatch;
-  }else{
+  }
+  else{
     return;
   }
 }
@@ -3986,22 +4207,27 @@ sub convertToTimeStamp {
     if(length $parts[0] != 4){
       return "";
     }
-  }else{
+  }
+  else{
     return "";
   }
   if(scalar @parts == 1){
     if($end == 0){
       $date .= "-01-01";
-    }elsif($end == 1){
+    }
+    elsif($end == 1){
       $date .= "-12-31";
     }
-  }elsif(scalar @parts == 2){
+  }
+  elsif(scalar @parts == 2){
     if($end == 0){
       $date .= "-01";
-    }elsif($end == 1){
+    }
+    elsif($end == 1){
       $date .= "-31";
     }
-  }elsif(scalar @parts != 3){
+  }
+  elsif(scalar @parts != 3){
     return "";
   }
   $date .= " 00:00:00.000";
@@ -4026,15 +4252,18 @@ sub checkUrl {
       if ($redirectMech->status() >= 400) {
         $logger->warn("URL $url is not currently valid!");
         return;
-      }else{
+      }
+      else{
         my $new_url = $redirectMech->uri();
         $new_url = $new_url->as_string();
         return $new_url;
       }
     }
-  }elsif($status == 200){
+  }
+  elsif($status == 200){
     return $url;
-  }else{
+  }
+  else{
     $logger->error("URL $url is not currently valid!");
     return;
   }
@@ -4061,7 +4290,8 @@ sub transformDate {
         $combined[0] .= "-".$parts{'sd'};
       }
     }
-  }else{
+  }
+  else{
     $combined[0] = "";
   }
 
@@ -4079,7 +4309,8 @@ sub transformDate {
         $combined[1] .= "-".$parts{'ed'};
       }
     }
-  }else{
+  }
+  else{
     $combined[1] = "";
   }
 
