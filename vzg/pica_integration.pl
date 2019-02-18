@@ -1004,15 +1004,10 @@ sub createJSON {
 
       $logger->info("Submitting $sumTitles titles to GOKb (".$gokbCreds{'base'}.")");
 
-      foreach my $title (@packageTitles){
-        my %curTitle = %{ $title };
-        my $postResult = postData('crossReferenceTitle', \%curTitle);
+      my $titlePostResult = postData('crossReferenceTitle', \@packageTitles);
 
-        if($postResult != 0){
-          $logger->error("Could not upload Title! Errorcode $postResult");
-
-          $skippedTitles++;
-        }
+      if($titlePostResult != 0){
+        $logger->error("Error uploading title! Errorcode $titlePostResult");
       }
 
       sleep 2;
@@ -2147,7 +2142,7 @@ sub processTitle {
     $titleInfo{'publishedTo'} = convertToTimeStamp($dts[0][1], 1);
   }
   else{
-    $titleInfo{'dateFirstOnline'} = convertToTimeStamp($dts[0][0], 0);
+    $titleInfo{'dateFirstInPrint'} = convertToTimeStamp($dts[0][0], 0);
   }
 
   # -------------------- Publisher --------------------
@@ -3251,7 +3246,10 @@ sub processTitle {
           $ppBase = $ppBase->authority();
         }
       }
-      $logger->debug("Base is: $ppBase");
+
+      if($ppBase) {
+        $logger->debug("Base is: $ppBase");
+      }
 
       if($ppBase) {
         my @ppBaseArray = split(/\./, $ppBase);
@@ -3915,10 +3913,20 @@ sub postData {
   my $data = shift;
   my $endPoint = $gokbCreds{'base'}."integration/".$endPointType;
   
-  if($data && ref($data) eq 'HASH'){
+  if($data){
   
     my $json_gokb = JSON->new->utf8->canonical;
-    my %decData = %{ $data };  
+
+    my %decData;
+    my @decData;
+
+    if (ref($data) eq 'HASH') {
+      %decData = %{ $data };
+    }
+    elsif (ref($data) eq 'ARRAY') {
+      @decData = @{ $data };
+    }
+
     my $ua = LWP::UserAgent->new;
 
     $ua->timeout(7200);
@@ -3927,19 +3935,35 @@ sub postData {
 
     $req->header('content-type' => 'application/json');
     $req->authorization_basic($gokbCreds{'username'}, $gokbCreds{'password'});
-    $req->content($json_gokb->encode( \%decData ));
+
+    if(ref($data) eq 'HASH') {
+      $req->content($json_gokb->encode( \%decData ));
+    }
+    else {
+      $req->content($json_gokb->encode( \@decData ));
+    }
     
     my $resp = $ua->request($req);
 
+    my $resp_content = decode_json($resp->content);
+    my @arrayResponse;
+    my %hashResponse;
+
+    if (ref($resp_content) eq 'ARRAY') {
+      @arrayResponse = @{$resp_content};
+    }
+    else {
+      %hashResponse = %{$resp_content};
+    }
+
     if($resp->is_success){
-      my %resp_content = %{decode_json($resp->content)};
 
       if($endPointType eq 'crossReferencePackage'){
 
-        my $rspMsg = $resp_content{'message'} ? $resp_content{'message'} : "none";
+        my $rspMsg = $hashResponse{'message'} ? $hashResponse{'message'} : "none";
 
         $logger->info("Commit of package successful.");
-        $logger->info("HTTP POST result: ", $resp_content{'result'});
+        $logger->info("HTTP POST result: ", $hashResponse{'result'});
         $logger->info("HTTP POST message: ", $rspMsg);
       }
 
@@ -3953,21 +3977,25 @@ sub postData {
         $logger->error("HTTP POST error message: ".$resp->message);
       }
       
-      my %resp_content;
-      
-      eval {
-      
-        %resp_content = %{decode_json($resp->content)};
-        
-        foreach my $eMessage (@{$resp_content{'errors'}}) {
-          my %eMessage = %{$eMessage};
-          $logger->error("Cause: ", $eMessage{'message'});
+      if(%hashResponse) {
+        $logger->error("HTTP POST error message:".$hashResponse{'message'});
+
+        if ($hashResponse{'errors'}) {
+          foreach my $eObj (@{$hashResponse{'errors'}}) {
+            my %eObj = %{$eObj};
+            $logger->error("Error:".$eObj{'message'});
+          }
         }
-        1;
-        
-      } or do {
-        $logger->error("Could not determine cause of error!");
-      };
+      }
+      elsif(@arrayResponse) {
+        foreach my $resObj (@arrayResponse) {
+          my %resObj = %{$resObj};
+
+          if ($resObj{'result'} eq 'ERROR') {
+            $logger->error($resObj{'message'});
+          }
+        }
+      }
       
       return $resp->code;
     }
