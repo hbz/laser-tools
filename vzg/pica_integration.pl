@@ -1922,8 +1922,14 @@ sub processTitle {
     $titleInfo{'editionStatement'} = pica_value($titleRecord, '032@a');
   }
 
-  if(pica_value($titleRecord, '032El')) {
-    $titleInfo{'volumeNumber'} = pica_value($titleRecord, '032El') =~ /\d+/
+  if(pica_value($titleRecord, '036El')) {
+    my ($volNumber) = pica_value($titleRecord, '036El') =~ /(\d+)/;
+
+    $logger->debug("Volume: $volNumber");
+
+    if($volNumber) {
+      $titleInfo{'volumeNumber'} = $volNumber;
+    }
   }
 
   my %releaseStart = (
@@ -3025,8 +3031,29 @@ sub processTitle {
     my %tippStats = %{$tippStats};
     my %tippComments = $tippComments ? %{$tippComments} : undef;
 
-    if( ($activeSource eq "gvk" || $activeSource eq "gbvcat") && pica_value($titleRecord, '008Ep')) {
-      $tipp{'status'} = "Retired";
+    if( ($activeSource eq "gvk" || $activeSource eq "gbvcat" || $activeSource eq "natliz") && pica_value($titleRecord, '008E') ) {
+      my $pkgIsil = $pkgInfo{'identifiers'}[0]{'value'};
+      my @pkgLinks = pica_fields($titleRecord, '008E');
+
+      foreach my $pkgLink (@pkgLinks) {
+
+        my @pkgLink = @{$pkgLink};
+        my $subfPos = 0;
+        my $linkedIsil;
+        my $retired;
+
+        foreach my $subField (@pkgLink){
+          if ($subField eq 'p') {
+            $retired = 1;
+          }elsif ($subField eq 'a') {
+            $linkedIsil = $pkgLink[$subfPos+1];
+          }
+        }
+
+        if ($linkedIsil && $linkedIsil eq $pkgIsil && $retired == 1) {
+          $tipp{'status'} = "Retired";
+        }
+      }
     }
     
     if(%tippComments) {
