@@ -234,11 +234,11 @@ if($argLocal >= 0){
 }
 
 if($argEndpoint >= 0) {
-  if($ARGV[$argEndpoint+1] && any { $_ eq $ARGV[$argEndpoint+1] } ("zdb","natliz","gvk","gbvcat") ) {
+  if($ARGV[$argEndpoint+1] && any { $_ eq $ARGV[$argEndpoint+1] } ("zdb","natliz","gvk","gbvcat","fid") ) {
     $endpoint = $ARGV[$argEndpoint+1];
   }
   else{
-    $logger->logdie("Ungültiger Endpunkt! Möglich sind 'zdb', 'natliz', 'gbvcat'(Zugriffsbeschränkt) und 'gvk'(Standard)");
+    $logger->logdie("Ungültiger Endpunkt! Möglich sind 'zdb', 'natliz', 'fid', 'gbvcat'(Zugriffsbeschränkt) und 'gvk'(Standard)");
   }
 }
 
@@ -1485,6 +1485,30 @@ sub processPackage {
     query => 'pica.xpr='.$packageInfo{'sigel'}.' and (pica.mak=Ob* or pica.mak=Od*)',
     base => 'http://sru.gbv.de/natlizfak',
     recordSchema => 'picatitle',
+    parser => 'picaxml',
+    _max_results => 3
+  };
+
+  $attrsScopes{'fid'}{'all'} = {
+    query => 'pica.xpr='.$packageInfo{'sigel'}.' and pica.mak=O*',
+    base => 'http://sru.gbv.de/fidelio',
+    recordSchema => 'picaxml',
+    parser => 'picaxml',
+    _max_results => 3
+  };
+
+  $attrsScopes{'fid'}{'journal'} = {
+    query => 'pica.xpr='.$packageInfo{'sigel'}.' and (pica.mak=Ob* or pica.mak=Od*)',
+    base => 'http://sru.gbv.de/fidelio',
+    recordSchema => 'picaxml',
+    parser => 'picaxml',
+    _max_results => 3
+  };
+
+  $attrsScopes{'fid'}{'book'} = {
+    query => 'pica.xpr='.$packageInfo{'sigel'}.' and pica.mak=Oa*',
+    base => 'http://sru.gbv.de/fidelio',
+    recordSchema => 'picaxml',
     parser => 'picaxml',
     _max_results => 3
   };
@@ -3153,146 +3177,290 @@ sub processTitle {
     }
   }
 
-  my $numSources = scalar @onlineSources;
-  my @skippedTipps = ();
-  my @validTipps = ();
+  if($activeSource eq "fid"){
+    my %tipp;
+    my $pkgIsil = $pkgInfo{'identifiers'}[0]{'value'};
+    my @url_items = pica_items($titleRecord);
+    my $host;
+    my $hostUrl;
+    my $url;
+    my $invalid;
 
-  foreach my $eSource (@onlineSources){
+    foreach my $item (@url_items){
+      my %item = %{$item};
 
-    my ($tipp, $tippWarnings, $tippStats, $tippComments) = processTipp($eSource, $pkgType, $gokbType, $activeSource, %titleInfo);
-    
-    my %tipp = %{$tipp};
-    my %tippWarnings = %{$tippWarnings};
-    my %tippStats = %{$tippStats};
-    my %tippComments = $tippComments ? %{$tippComments} : undef;
+      if (pica_value($item, '2090a') eq $pkgIsil) {
+        my $final_url;
+        my @urls = @{pica_fields($item, '209R[01]')};
 
-    if( ($activeSource eq "gvk" || $activeSource eq "gbvcat" || $activeSource eq "natliz") && pica_value($titleRecord, '008E') ) {
-      my $pkgIsil = $pkgInfo{'identifiers'}[0]{'value'};
-      my @pkgLinks = pica_fields($titleRecord, '008E');
+        foreach my $urlObject (@urls) {
+          my @urlObject = @{$urlObject};
+          my $validComment = 0;
+          my $subfPos = 0;
+          my $urlCandidate;
 
-      foreach my $pkgLink (@pkgLinks) {
-
-        my @pkgLink = @{$pkgLink};
-        my $subfPos = 0;
-        my $linkedIsil;
-        my $retired;
-
-        foreach my $subField (@pkgLink){
-          if ($subField eq 'p') {
-            $retired = 1;
+          foreach my $subField (@urlObject){
+            if ($subField eq 'y' && $urlObject[$subfPos+1] eq 'Zugriff nur für berechtigte Nutzer des FID') {
+              $validComment = 1;
+            }
+            if ($subField eq 'a') {
+              $urlCandidate = $urlObject[$subfPos+1];
+            }
+            $subfPos++;
           }
-          elsif ($subField eq 'a') {
-            $linkedIsil = $pkgLink[$subfPos+1];
-          }
-        }
 
-        if ($linkedIsil && $linkedIsil eq $pkgIsil && $retired == 1) {
-          $tipp{'status'} = "Retired";
+          if ($validComment) {
+            $url = $urlCandidate;
+          }
         }
       }
     }
-    
-    if(%tippComments) {
-      $tipp{'licence'} = $tippComments{'public'} ? $tippComments{'public'} : $tippComments{'licence'};
-    }
-    else {
-      $tipp{'licence'} = 'unknown';
-    }
-    $tipp{'type'} = $tippComments{'internal'};
 
-    if(!$tipp{'action'}){
-      push @validTipps, \%tipp;
-    }
-    elsif ($tipp{'action'} eq "skipped") {
-      delete $tipp{'action'};
+    $tipp{'url'} = $url;
 
-      push @skippedTipps, \%tipp;
-    }
-    
-    if($titleWarnings{'id'} ne "" ){
-      push @{ $titleWarnings{'all'} }, @{ $tippWarnings{'all'} };
-      push @{ $titleWarnings{'zdb'} }, @{ $tippWarnings{'zdb'} };
-      push @{ $titleWarnings{'gvk'} }, @{ $tippWarnings{'gvk'} };
-    }
-    
-    foreach my $tippStat (keys %tippStats){
-      if (!$titleStats{$tippStat}){
-        $titleStats{$tippStat} = $tippStats{$tippStat};
+    if($url->has_recognized_scheme){
+
+      $host = $url->authority;
+      my $scheme = $url->scheme;
+
+      if(!$host){
+        if($titleStats{'brokenURL'}){
+          $titleStats{'brokenURL'}++;
+        }
+        else{
+          $titleStats{'brokenURL'} = 1;
+        }
+        push @{ $titleWarnings{'all'} }, {
+          '209R[01]a'=> $url,
+          'comment' => 'Aus der URL konnte kein Host ermittelt werden.'
+        };
+
+        push @{ $titleWarnings{'gvk'} }, {
+          '209R[01]a'=> $url,
+          'comment' => 'Aus der URL konnte kein Host ermittelt werden.'
+        };
+
+        $logger->error("Could not extract host of URL $url");
+        $invalid = 1;
       }
       else{
-        $titleStats{$tippStat} += $tippStats{$tippStat};
+        $hostUrl = "$scheme://$host";
       }
     }
+    else {
+      $logger->warn("Looks like a wrong URL!");
+
+      if($titleStats{'brokenURL'}){
+        $titleStats{'brokenURL'}++;
+      }
+      else{
+        $titleStats{'brokenURL'} = 1;
+      }
+
+      push @{ $titleWarnings{'all'} }, {
+        '209R[01]a'=> $url,
+        'comment' => 'URL-Schema konnte nicht ermittelt werden!'
+      };
+
+      push @{ $titleWarnings{'gvk'} }, {
+        '209R[01]a'=> $url,
+        'comment' => 'URL-Schema konnte nicht ermittelt werden!'
+      };
+
+      $logger->error("Could not extract scheme of URL $url");
+      $invalid = 1;
+    }
+
+    $tipp{'platform'} = {
+      'name' => lc (substr($host, 0, 3) eq 'www' ? substr($host, 4) : $host),
+      'primaryUrl' => $hostUrl
+    };
+
+    $tipp{'coverage'} = [];
+
+    my %dates = (
+        'sj' => pica_value($titleRecord, '231@j') || '0',
+        'sm' => pica_value($titleRecord, '231@c') || '0',
+        'sd' => pica_value($titleRecord, '231@b') || '0',
+        'ej' => pica_value($titleRecord, '231@k') || '0',
+        'em' => pica_value($titleRecord, '231@m') || '0',
+        'ed' => pica_value($titleRecord, '231@l') || '0',
+    );
     
+    my @dts = transformDate(%dates);
+
+    push @{ $tipp{'coverage'} }, {
+      'startDate' => convertToTimeStamp($dts[0][0], 0),
+      'startVolume' => (pica_value($titleRecord, '231@d') || ""),
+      'startIssue' => (pica_value($titleRecord, '231@e') || ""),
+      'endDate' => convertToTimeStamp($dts[0][1], 1),
+      'endVolume' => (pica_value($titleRecord, '231@n') || ""),
+      'endIssue' => (pica_value($titleRecord, '231@o') || ""),
+      'coverageDepth' => "fulltext",
+      'coverageNote' => ""
+    };
+
+    $tipp{'title'} = {
+      'identifiers' => \@{ $titleInfo{'identifiers'} },
+      'name' => $titleInfo{'name'},
+      'type' => $gokbType
+    };
+
+    if (!$invalid) {
+      push @tipps, \%tipp;
+    }
   }
- # End TIPP
+  else {
 
-  # -------------------- Select URLs ... --------------------
+    my $numSources = scalar @onlineSources;
+    my @skippedTipps = ();
+    my @validTipps = ();
 
-  $logger->info("Relevante TIPPs: ".scalar @validTipps." - Sonstige: ".scalar @skippedTipps);
+    foreach my $eSource (@onlineSources){
 
-  if(scalar @validTipps > 0){
+      my ($tipp, $tippWarnings, $tippStats, $tippComments) = processTipp($eSource, $pkgType, $gokbType, $activeSource, %titleInfo);
 
-    my %remainingValidTipps;
+      my %tipp = %{$tipp};
+      my %tippWarnings = %{$tippWarnings};
+      my %tippStats = %{$tippStats};
+      my %tippComments = $tippComments ? %{$tippComments} : undef;
 
-    foreach my $validTipp (@validTipps) {
-      my %vTipp = %{$validTipp};
-      my $tippType = $vTipp{'type'};
-      my $ppBase;
+      if( ($activeSource eq "gvk" || $activeSource eq "gbvcat" || $activeSource eq "natliz") && pica_value($titleRecord, '008E') ) {
+        my $pkgIsil = $pkgInfo{'identifiers'}[0]{'value'};
+        my @pkgLinks = pica_fields($titleRecord, '008E');
 
-      if($packagePlatformUrl) {
-        eval {
-          $ppBase = URI->new( $packagePlatformUrl );
-          $ppBase = $ppBase->authority();
+        foreach my $pkgLink (@pkgLinks) {
+
+          my @pkgLink = @{$pkgLink};
+          my $subfPos = 0;
+          my $linkedIsil;
+          my $retired;
+
+          foreach my $subField (@pkgLink){
+            if ($subField eq 'p') {
+              $retired = 1;
+            }
+            elsif ($subField eq 'a') {
+              $linkedIsil = $pkgLink[$subfPos+1];
+            }
+          }
+
+          if ($linkedIsil && $linkedIsil eq $pkgIsil && $retired == 1) {
+            $tipp{'status'} = "Retired";
+          }
         }
       }
 
-      if($ppBase) {
-        $logger->debug("Base is: $ppBase");
+      if(%tippComments) {
+        $tipp{'licence'} = $tippComments{'public'} ? $tippComments{'public'} : $tippComments{'licence'};
+      }
+      else {
+        $tipp{'licence'} = 'unknown';
+      }
+      $tipp{'type'} = $tippComments{'internal'};
+
+      if(!$tipp{'action'}){
+        push @validTipps, \%tipp;
+      }
+      elsif ($tipp{'action'} eq "skipped") {
+        delete $tipp{'action'};
+
+        push @skippedTipps, \%tipp;
       }
 
-      if($ppBase) {
-        my @ppBaseArray = split(/\./, $ppBase);
-        $logger->debug("Base Array length is ".scalar @ppBaseArray);
+      if($titleWarnings{'id'} ne "" ){
+        push @{ $titleWarnings{'all'} }, @{ $tippWarnings{'all'} };
+        push @{ $titleWarnings{'zdb'} }, @{ $tippWarnings{'zdb'} };
+        push @{ $titleWarnings{'gvk'} }, @{ $tippWarnings{'gvk'} };
+      }
 
-        if($ppBase =~ $vTipp{'platform'}{'name'} || $vTipp{'platform'}{'name'} =~ $ppBase){
-          $logger->info("URL mit Paketbasis $ppBase gefunden (TIPP-Plattform ist ".$vTipp{'platform'}{'name'}.").");
-          delete $vTipp{'comment'};
-          delete $vTipp{'licence'};
-          delete $vTipp{'type'};
-          push @tipps, \%vTipp;
+      foreach my $tippStat (keys %tippStats){
+        if (!$titleStats{$tippStat}){
+          $titleStats{$tippStat} = $tippStats{$tippStat};
         }
-        elsif(scalar @ppBaseArray > 2) {
-          splice @ppBaseArray, 0,1;
-          $ppBase = join('.', @ppBaseArray);
-          $logger->debug("NO Base URL match! Trying $ppBase ..");
+        else{
+          $titleStats{$tippStat} += $tippStats{$tippStat};
+        }
+      }
 
-          if($vTipp{'platform'}{'name'} =~ $ppBase) {
-            $logger->info("Found plattform by shortened URL!");
+    }
+  # End TIPP
+
+    # -------------------- Select URLs ... --------------------
+
+    $logger->info("Relevante TIPPs: ".scalar @validTipps." - Sonstige: ".scalar @skippedTipps);
+
+    if(scalar @validTipps > 0){
+
+      my %remainingValidTipps;
+
+      foreach my $validTipp (@validTipps) {
+        my %vTipp = %{$validTipp};
+        my $tippType = $vTipp{'type'};
+        my $ppBase;
+
+        if($packagePlatformUrl) {
+          eval {
+            $ppBase = URI->new( $packagePlatformUrl );
+            $ppBase = $ppBase->authority();
+          }
+        }
+
+        if($ppBase) {
+          $logger->debug("Base is: $ppBase");
+        }
+
+        if($ppBase) {
+          my @ppBaseArray = split(/\./, $ppBase);
+          $logger->debug("Base Array length is ".scalar @ppBaseArray);
+
+          if($ppBase =~ $vTipp{'platform'}{'name'} || $vTipp{'platform'}{'name'} =~ $ppBase){
+            $logger->info("URL mit Paketbasis $ppBase gefunden (TIPP-Plattform ist ".$vTipp{'platform'}{'name'}.").");
             delete $vTipp{'comment'};
             delete $vTipp{'licence'};
             delete $vTipp{'type'};
             push @tipps, \%vTipp;
           }
-          else{
-            $logger->info("Could not match $ppBase and ".$vTipp{'platform'}{'name'});
+          elsif(scalar @ppBaseArray > 2) {
+            splice @ppBaseArray, 0,1;
+            $ppBase = join('.', @ppBaseArray);
+            $logger->debug("NO Base URL match! Trying $ppBase ..");
 
-            if(!$tippType) {
-              push @skippedTipps, \%vTipp;
+            if($vTipp{'platform'}{'name'} =~ $ppBase) {
+              $logger->info("Found plattform by shortened URL!");
+              delete $vTipp{'comment'};
+              delete $vTipp{'licence'};
+              delete $vTipp{'type'};
+              push @tipps, \%vTipp;
             }
-            else {
-              if (ref($remainingValidTipps{$tippType}) eq 'ARRAY'){
-                push @{$remainingValidTipps{$tippType}}, \%vTipp;
+            else{
+              $logger->info("Could not match $ppBase and ".$vTipp{'platform'}{'name'});
+
+              if(!$tippType) {
+                push @skippedTipps, \%vTipp;
               }
-              else{
-                $remainingValidTipps{$tippType} = [\%vTipp];
+              else {
+                if (ref($remainingValidTipps{$tippType}) eq 'ARRAY'){
+                  push @{$remainingValidTipps{$tippType}}, \%vTipp;
+                }
+                else{
+                  $remainingValidTipps{$tippType} = [\%vTipp];
+                }
               }
             }
           }
-        }
-        else{
-          $logger->info("Could not match $ppBase with ".$vTipp{'platform'}{'name'});
+          else{
+            $logger->info("Could not match $ppBase with ".$vTipp{'platform'}{'name'});
 
+            if (ref($remainingValidTipps{$tippType}) eq 'ARRAY'){
+              push @{$remainingValidTipps{$tippType}}, \%vTipp;
+            }
+            else{
+              $remainingValidTipps{$tippType} = [\%vTipp];
+            }
+          }
+        }
+        else {
           if (ref($remainingValidTipps{$tippType}) eq 'ARRAY'){
             push @{$remainingValidTipps{$tippType}}, \%vTipp;
           }
@@ -3301,163 +3469,162 @@ sub processTitle {
           }
         }
       }
-    }
 
-    if(scalar @tipps == 0) {
-      if($remainingValidTipps{'H'}){
-        $logger->info("Found other valid publisher URL (type 'H')");
-        foreach my $selectedValidTipp (@{$remainingValidTipps{'H'}}) {
-          my %svTipp = %{$selectedValidTipp};
-          delete $svTipp{'comment'};
-          delete $svTipp{'licence'};
-          delete $svTipp{'type'};
-          push @tipps, \%svTipp;
+      if(scalar @tipps == 0) {
+        if($remainingValidTipps{'H'}){
+          $logger->info("Found other valid publisher URL (type 'H')");
+          foreach my $selectedValidTipp (@{$remainingValidTipps{'H'}}) {
+            my %svTipp = %{$selectedValidTipp};
+            delete $svTipp{'comment'};
+            delete $svTipp{'licence'};
+            delete $svTipp{'type'};
+            push @tipps, \%svTipp;
+          }
         }
-      }
-      elsif($remainingValidTipps{'D'}){
-        $logger->info("Found valid digitisation URL(s) (type 'D')");
-        foreach my $selectedValidTipp (@{$remainingValidTipps{'D'}}) {
-          my %svTipp = %{$selectedValidTipp};
-          delete $svTipp{'comment'};
-          delete $svTipp{'licence'};
-          delete $svTipp{'type'};
-          push @tipps, \%svTipp;
+        elsif($remainingValidTipps{'D'}){
+          $logger->info("Found valid digitisation URL(s) (type 'D')");
+          foreach my $selectedValidTipp (@{$remainingValidTipps{'D'}}) {
+            my %svTipp = %{$selectedValidTipp};
+            delete $svTipp{'comment'};
+            delete $svTipp{'licence'};
+            delete $svTipp{'type'};
+            push @tipps, \%svTipp;
+          }
         }
-      }
-      elsif($remainingValidTipps{'A'}){
-        $logger->info("Found other valid agent URL(s) (type 'A')");
-        foreach my $selectedValidTipp (@{$remainingValidTipps{'A'}}) {
-          my %svTipp = %{$selectedValidTipp};
-          delete $svTipp{'comment'};
-          delete $svTipp{'licence'};
-          delete $svTipp{'type'};
-          push @tipps, \%svTipp;
+        elsif($remainingValidTipps{'A'}){
+          $logger->info("Found other valid agent URL(s) (type 'A')");
+          foreach my $selectedValidTipp (@{$remainingValidTipps{'A'}}) {
+            my %svTipp = %{$selectedValidTipp};
+            delete $svTipp{'comment'};
+            delete $svTipp{'licence'};
+            delete $svTipp{'type'};
+            push @tipps, \%svTipp;
+          }
         }
-      }
-      elsif($remainingValidTipps{'C'}){
-        $logger->info("Found other valid archival URL(s) (type 'C')");
-        foreach my $selectedValidTipp (@{$remainingValidTipps{'C'}}) {
-          my %svTipp = %{$selectedValidTipp};
-          delete $svTipp{'comment'};
-          delete $svTipp{'licence'};
-          delete $svTipp{'type'};
-          push @tipps, \%svTipp;
+        elsif($remainingValidTipps{'C'}){
+          $logger->info("Found other valid archival URL(s) (type 'C')");
+          foreach my $selectedValidTipp (@{$remainingValidTipps{'C'}}) {
+            my %svTipp = %{$selectedValidTipp};
+            delete $svTipp{'comment'};
+            delete $svTipp{'licence'};
+            delete $svTipp{'type'};
+            push @tipps, \%svTipp;
+          }
         }
-      }
-      elsif($remainingValidTipps{'L'}){
-        $logger->info("Found other valid long-time archival URL(s) (type 'L')");
-        foreach my $selectedValidTipp (@{$remainingValidTipps{'L'}}) {
-          my %svTipp = %{$selectedValidTipp};
-          delete $svTipp{'comment'};
-          delete $svTipp{'licence'};
-          delete $svTipp{'type'};
-          push @tipps, \%svTipp;
+        elsif($remainingValidTipps{'L'}){
+          $logger->info("Found other valid long-time archival URL(s) (type 'L')");
+          foreach my $selectedValidTipp (@{$remainingValidTipps{'L'}}) {
+            my %svTipp = %{$selectedValidTipp};
+            delete $svTipp{'comment'};
+            delete $svTipp{'licence'};
+            delete $svTipp{'type'};
+            push @tipps, \%svTipp;
+          }
         }
-      }
-      elsif($remainingValidTipps{'G'}){
-        $logger->info("Found other valid aggregator URL(s) (type 'G')");
-        foreach my $selectedValidTipp (@{$remainingValidTipps{'G'}}) {
-          my %svTipp = %{$selectedValidTipp};
-          delete $svTipp{'comment'};
-          delete $svTipp{'licence'};
-          delete $svTipp{'type'};
-          push @tipps, \%svTipp;
-        }
-      }
-    }
-  }
-
-  if(scalar @tipps == 0 && scalar @skippedTipps > 0){
-
-    foreach my $skTipp (@skippedTipps) {
-      my %skTipp = %{$skTipp};
-      $logger->info("Looking for OA-URL");
-      if ( scalar @tipps == 0 && ($skTipp{'licence'} eq "LF" || $skTipp{'licence'} eq "KF" || $skTipp{'licence'} eq "KW") ) {
-        delete $skTipp{'comment'};
-        delete $skTipp{'licence'};
-        delete $skTipp{'type'};
-        push @tipps, \%skTipp;
-
-        if($titleStats{'numUsedOA'}){
-          $titleStats{'numUsedOA'}++;
-        }
-        else{
-          $titleStats{'numUsedOA'} = 1;
+        elsif($remainingValidTipps{'G'}){
+          $logger->info("Found other valid aggregator URL(s) (type 'G')");
+          foreach my $selectedValidTipp (@{$remainingValidTipps{'G'}}) {
+            my %svTipp = %{$selectedValidTipp};
+            delete $svTipp{'comment'};
+            delete $svTipp{'licence'};
+            delete $svTipp{'type'};
+            push @tipps, \%svTipp;
+          }
         }
       }
     }
-    if ( scalar @tipps == 0) {
-      $logger->info("Looking for other Publisher-URLs");
+
+    if(scalar @tipps == 0 && scalar @skippedTipps > 0){
+
       foreach my $skTipp (@skippedTipps) {
         my %skTipp = %{$skTipp};
-
-        if ($skTipp{'type'} eq "H" || $skTipp{'type'} eq "") {
+        $logger->info("Looking for OA-URL");
+        if ( scalar @tipps == 0 && ($skTipp{'licence'} eq "LF" || $skTipp{'licence'} eq "KF" || $skTipp{'licence'} eq "KW") ) {
           delete $skTipp{'comment'};
           delete $skTipp{'licence'};
           delete $skTipp{'type'};
           push @tipps, \%skTipp;
-          if ( scalar @tipps > 0 ) {
-            $logger->info("Got more than one Publisher-URL..");
+
+          if($titleStats{'numUsedOA'}){
+            $titleStats{'numUsedOA'}++;
+          }
+          else{
+            $titleStats{'numUsedOA'} = 1;
+          }
+        }
+      }
+      if ( scalar @tipps == 0) {
+        $logger->info("Looking for other Publisher-URLs");
+        foreach my $skTipp (@skippedTipps) {
+          my %skTipp = %{$skTipp};
+
+          if ($skTipp{'type'} eq "H" || $skTipp{'type'} eq "") {
+            delete $skTipp{'comment'};
+            delete $skTipp{'licence'};
+            delete $skTipp{'type'};
+            push @tipps, \%skTipp;
+            if ( scalar @tipps > 0 ) {
+              $logger->info("Got more than one Publisher-URL..");
+            }
+          }
+        }
+      }
+    }
+
+    if (scalar @tipps == 0){
+
+      # Add placeholder TIPP
+
+      if($titleStats{'numNoUrl'}){
+        $titleStats{'numNoUrl'}++;
+      }
+      else{
+        $titleStats{'numNoUrl'} = 1;
+      }
+      $logger->warn("No valid URL found, adding placeholder ($id)!");
+
+      push @{ $titleWarnings{'all'} }, {
+          '009P0'=> "Keine relevanten URLs identifiziert!"
+      };
+
+      push @{ $titleWarnings{'gvk'} }, {
+          '009P0'=> "Keine relevanten URLs identifiziert!"
+      };
+
+      if($packagePlatformName){
+        push @tipps, {
+          'medium' => "Electronic",
+          'platform' => {
+            'name' => $packagePlatformName ? $packagePlatformName : "",
+            'primaryUrl' => $packagePlatformUrl
+          },
+          'url' => $packagePlatformUrl,
+          'status' => "Current",
+          'title' => {
+            'identifiers' => \@{$titleInfo{'identifiers'}},
+            'name' => $titleInfo{'name'},
+            'type' => $gokbType
+          }
+        }
+      }
+      else{
+        push @tipps, {
+          'medium' => "Electronic",
+          'platform' => {
+            'name' => $packagePlatformUrl,
+            'primaryUrl' => ""
+          },
+          'url' => $packagePlatformUrl,
+          'status' => "Current",
+          'title' => {
+            'identifiers' => \@{$titleInfo{'identifiers'}},
+            'name' => $titleInfo{'name'},
+            'type' => $gokbType
           }
         }
       }
     }
   }
-
-  if (scalar @tipps == 0){
-
-    # Add placeholder TIPP
-
-    if($titleStats{'numNoUrl'}){
-      $titleStats{'numNoUrl'}++;
-    }
-    else{
-      $titleStats{'numNoUrl'} = 1;
-    }
-    $logger->warn("No valid URL found, adding placeholder ($id)!");
-
-    push @{ $titleWarnings{'all'} }, {
-        '009P0'=> "Keine relevanten URLs identifiziert!"
-    };
-
-    push @{ $titleWarnings{'gvk'} }, {
-        '009P0'=> "Keine relevanten URLs identifiziert!"
-    };
-
-    if($packagePlatformName){
-      push @tipps, {
-        'medium' => "Electronic",
-        'platform' => {
-          'name' => $packagePlatformName ? $packagePlatformName : "",
-          'primaryUrl' => $packagePlatformUrl
-        },
-        'url' => $packagePlatformUrl,
-        'status' => "Current",
-        'title' => {
-          'identifiers' => \@{$titleInfo{'identifiers'}},
-          'name' => $titleInfo{'name'},
-          'type' => $gokbType
-        }
-      }
-    }
-    else{
-      push @tipps, {
-        'medium' => "Electronic",
-        'platform' => {
-          'name' => $packagePlatformUrl,
-          'primaryUrl' => ""
-        },
-        'url' => $packagePlatformUrl,
-        'status' => "Current",
-        'title' => {
-          'identifiers' => \@{$titleInfo{'identifiers'}},
-          'name' => $titleInfo{'name'},
-          'type' => $gokbType
-        }
-      }
-    }
-  }
-
   # -------------------- Warnings --------------------
 
   if(scalar @{$titleWarnings{'all'}} > 0){
