@@ -1275,6 +1275,13 @@ sub processPackage {
       normname => "Natliz_SRU"
     );
   }
+  elsif($endpoint eq 'fid'){
+    %pkgSource = (
+      url => "http://sru.gbv.de/fidelio",
+      name => "FID-SRU",
+      normname => "FID_SRU"
+    );
+  }
   my $pkgNoProv = "$pkgName: ".($owner ne "Master" ? $owner : $pkgType);
 
   my @curGroups = ("LAS:eR", "VZG", "ZDB");
@@ -1614,7 +1621,7 @@ sub processTitle {
     $gokbMedium = "Book";
   }
   else{
-    $logger->error("Kann Materialtyp für $ppn nicht bestimmen...");
+    $logger->debug("Überspringe ppn $ppn mit Materialcode '$typeChar'...");
     return \@tipps, \%titleStats, \%titleWarnings, \%titleInfo;
   }
 
@@ -1911,7 +1918,7 @@ sub processTitle {
     }
   }
   else{
-    $logger->error("Kann Materialtyp für $ppn nicht bestimmen...");
+    $logger->debug("Überspringe ppn $ppn mit Materialcode '$typeChar'...");
     return \@tipps, \%titleStats, \%titleWarnings, \%titleInfo;
   }
   $titleWarnings{'id'} = $id;
@@ -2151,12 +2158,12 @@ sub processTitle {
   }
 
   my %dates = (
-    'sj' => $start_year,
-    'sm' => $start_month,
-    'sd' => $start_day,
-    'ej' => $end_year,
-    'em' => $end_month,
-    'ed' => $end_day
+    'startj' => $start_year,
+    'startm' => $start_month,
+    'startd' => $start_day,
+    'endj' => $end_year,
+    'endm' => $end_month,
+    'endd' => $end_day
   );
 
   my @dts = transformDate(\%dates);
@@ -3180,18 +3187,24 @@ sub processTitle {
   if($activeSource eq "fid"){
     my %tipp;
     my $pkgIsil = $pkgInfo{'identifiers'}[0]{'value'};
-    my @url_items = pica_items($titleRecord);
+    my $packageItem;
+    my @url_items = @{pica_items($titleRecord)};
     my $host;
     my $hostUrl;
-    my $url;
+    my $tipp_url;
     my $invalid;
 
-    foreach my $item (@url_items){
-      my %item = %{$item};
+    $logger->debug("$pkgIsil");
 
-      if (pica_value($item, '2090a') eq $pkgIsil) {
+    foreach my $item (@url_items){
+      my $item_isil = pica_value($item, '209Oa');
+      $item_isil =~ s/^\s+|\s+$//g;
+
+      $logger->debug(" Item ISIL: $item_isil");
+      if ($item_isil && $item_isil eq $pkgIsil) {
         my $final_url;
-        my @urls = @{pica_fields($item, '209R[01]')};
+        $packageItem = $item;
+        my @urls = @{pica_fields($packageItem, '209R[01]')};
 
         foreach my $urlObject (@urls) {
           my @urlObject = @{$urlObject};
@@ -3210,18 +3223,23 @@ sub processTitle {
           }
 
           if ($validComment) {
-            $url = $urlCandidate;
+            $tipp_url = $urlCandidate;
           }
         }
       }
+      else {
+        $logger->debug("Exemplar bezieht sich auf anderes Paket $item_isil.");
+      }
     }
 
-    $tipp{'url'} = $url;
+    $tipp{'url'} = $tipp_url;
 
-    if($url->has_recognized_scheme){
+    my $uri = URI->new($tipp_url);
 
-      $host = $url->authority;
-      my $scheme = $url->scheme;
+    if($uri->has_recognized_scheme){
+
+      $host = $uri->authority;
+      my $scheme = $uri->scheme;
 
       if(!$host){
         if($titleStats{'brokenURL'}){
@@ -3231,16 +3249,16 @@ sub processTitle {
           $titleStats{'brokenURL'} = 1;
         }
         push @{ $titleWarnings{'all'} }, {
-          '209R[01]a'=> $url,
+          '209R[01]a'=> $tipp_url,
           'comment' => 'Aus der URL konnte kein Host ermittelt werden.'
         };
 
         push @{ $titleWarnings{'gvk'} }, {
-          '209R[01]a'=> $url,
+          '209R[01]a'=> $tipp_url,
           'comment' => 'Aus der URL konnte kein Host ermittelt werden.'
         };
 
-        $logger->error("Could not extract host of URL $url");
+        $logger->error("Could not extract host of URL $tipp_url");
         $invalid = 1;
       }
       else{
@@ -3258,16 +3276,16 @@ sub processTitle {
       }
 
       push @{ $titleWarnings{'all'} }, {
-        '209R[01]a'=> $url,
+        '209R[01]a'=> $tipp_url,
         'comment' => 'URL-Schema konnte nicht ermittelt werden!'
       };
 
       push @{ $titleWarnings{'gvk'} }, {
-        '209R[01]a'=> $url,
+        '209R[01]a'=> $tipp_url,
         'comment' => 'URL-Schema konnte nicht ermittelt werden!'
       };
 
-      $logger->error("Could not extract scheme of URL $url");
+      $logger->error("Could not extract scheme of URL $tipp_url");
       $invalid = 1;
     }
 
@@ -3278,24 +3296,26 @@ sub processTitle {
 
     $tipp{'coverage'} = [];
 
+
+
     my %dates = (
-        'sj' => pica_value($titleRecord, '231@j') || '0',
-        'sm' => pica_value($titleRecord, '231@c') || '0',
-        'sd' => pica_value($titleRecord, '231@b') || '0',
-        'ej' => pica_value($titleRecord, '231@k') || '0',
-        'em' => pica_value($titleRecord, '231@m') || '0',
-        'ed' => pica_value($titleRecord, '231@l') || '0',
+        'startj' => (pica_value($packageItem, '231@j') || '0'),
+        'startm' => (pica_value($packageItem, '231@c') || '0'),
+        'startd' => (pica_value($packageItem, '231@b') || '0'),
+        'endj' => (pica_value($packageItem, '231@k') || '0'),
+        'endm' => (pica_value($packageItem, '231@m') || '0'),
+        'endd' => (pica_value($packageItem, '231@l') || '0')
     );
-    
-    my @dts = transformDate(%dates);
+
+    my @dts = transformDate(\%dates);
 
     push @{ $tipp{'coverage'} }, {
       'startDate' => convertToTimeStamp($dts[0][0], 0),
-      'startVolume' => (pica_value($titleRecord, '231@d') || ""),
-      'startIssue' => (pica_value($titleRecord, '231@e') || ""),
+      'startVolume' => (pica_value($packageItem, '231@d') || ""),
+      'startIssue' => (pica_value($packageItem, '231@e') || ""),
       'endDate' => convertToTimeStamp($dts[0][1], 1),
-      'endVolume' => (pica_value($titleRecord, '231@n') || ""),
-      'endIssue' => (pica_value($titleRecord, '231@o') || ""),
+      'endVolume' => (pica_value($packageItem, '231@n') || ""),
+      'endIssue' => (pica_value($packageItem, '231@o') || ""),
       'coverageDepth' => "fulltext",
       'coverageNote' => ""
     };
@@ -4443,18 +4463,18 @@ sub transformDate {
   my %parts = %{ $parts };
   my @combined;
 
-  if($parts{'sj'} ne '0'){
-    my $corYear = $parts{'sj'};
-    if(!looks_like_number($parts{'sj'})){
-      $corYear = substr($parts{'sj'}, 0, 4);
+  if($parts{'startj'} ne '0'){
+    my $corYear = $parts{'startj'};
+    if(!looks_like_number($parts{'startj'})){
+      $corYear = substr($parts{'startj'}, 0, 4);
     }
     $combined[0] = $corYear;
 
-    if($parts{'sm'} ne '0'){
-      $combined[0] .= "-".$parts{'sm'};
+    if($parts{'startm'} ne '0'){
+      $combined[0] .= "-".$parts{'startm'};
 
-      if($parts{'sd'} ne 0){
-        $combined[0] .= "-".$parts{'sd'};
+      if($parts{'startd'} ne 0){
+        $combined[0] .= "-".$parts{'startd'};
       }
     }
   }
@@ -4462,18 +4482,18 @@ sub transformDate {
     $combined[0] = "";
   }
 
-  if($parts{'ej'} ne '0'){
-    my $corYear = $parts{'ej'};
-    if(!looks_like_number($parts{'ej'})){
-      $corYear = substr($parts{'ej'}, 0, 4);
+  if($parts{'endj'} ne '0'){
+    my $corYear = $parts{'endj'};
+    if(!looks_like_number($parts{'endj'})){
+      $corYear = substr($parts{'endj'}, 0, 4);
     }
     $combined[1] = $corYear;
 
-    if($parts{'em'} ne '0'){
-      $combined[1] .= "-".$parts{'em'};
+    if($parts{'endm'} ne '0'){
+      $combined[1] .= "-".$parts{'endm'};
 
-      if($parts{'ed'} ne '0'){
-        $combined[1] .= "-".$parts{'ed'};
+      if($parts{'endd'} ne '0'){
+        $combined[1] .= "-".$parts{'endd'};
       }
     }
   }
