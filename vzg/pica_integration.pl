@@ -1602,6 +1602,7 @@ sub processTitle {
   my @pissn = ();
   my @relatedPrev = ();
   my %titleStats;
+  my $altType = pica_value($titleRecord, '013Da');
 
   my %titleWarnings = (
     'id' => "",
@@ -1612,9 +1613,13 @@ sub processTitle {
 
     # Process material code
 
-  if($isJournal){
+  if($isJournal && $altType ne 'Datenbank'){
     $gokbType = "Serial";
     $gokbMedium = "Journal";
+  }
+  elsif($altType && $altType eq 'Datenbank'){
+    $gokbType = "Database";
+    $gokbMedium = "Database";
   }
   elsif($typeChar eq 'a'){
     $gokbType = "Monograph";
@@ -1898,7 +1903,7 @@ sub processTitle {
           $subfPos++;
         }
 
-        if ($isbn && ($isbnType eq 'Online' || !$isbnType)) {
+        if ($isbn && (!$isbnType || $isbnType eq 'Online')) {
           push @{ $titleInfo{'identifiers'}} , {
             'type' => "isbn",
             'value' => $isbn
@@ -3183,6 +3188,14 @@ sub processTitle {
       push @onlineSources, @{pica_fields($titleRecord, '009P[05]')};
     }
   }
+  elsif($activeSource eq "fid") {
+    if(pica_value($titleRecord, '009P[03]')){
+      push @onlineSources, @{pica_fields($titleRecord, '009P[03]')};
+    }
+    if(pica_value($titleRecord, '009P[05]')){
+      push @onlineSources, @{pica_fields($titleRecord, '009P[05]')};
+    }
+  }
 
   if($activeSource eq "fid"){
     my %tipp;
@@ -3197,140 +3210,138 @@ sub processTitle {
     $logger->debug("$pkgIsil");
 
     foreach my $item (@url_items){
-      my $item_isil = pica_value($item, '209Oa');
-      $item_isil =~ s/^\s+|\s+$//g;
 
-      $logger->debug(" Item ISIL: $item_isil");
-      if ($item_isil && $item_isil eq $pkgIsil) {
-        my $final_url;
-        $packageItem = $item;
-        my @urls = @{pica_fields($packageItem, '209R[01]')};
+      if (pica_value($item, '209Oa')) {
+        my $item_isil = pica_value($item, '209Oa');
+        $item_isil =~ s/^\s+|\s+$//g;
 
-        foreach my $urlObject (@urls) {
-          my @urlObject = @{$urlObject};
-          my $validComment = 0;
-          my $subfPos = 0;
-          my $urlCandidate;
+        $logger->debug(" Item ISIL: $item_isil");
+        if ($item_isil && $item_isil eq $pkgIsil) {
+          my $final_url;
+          $packageItem = $item;
+          my @urls = @{pica_fields($packageItem, '209R[01]')};
 
-          foreach my $subField (@urlObject){
-            if ($subField eq 'y' && $urlObject[$subfPos+1] eq 'Zugriff nur für berechtigte Nutzer des FID') {
-              $validComment = 1;
+          foreach my $urlObject (@urls) {
+            my @urlObject = @{$urlObject};
+            my $validComment = 0;
+            my $subfPos = 0;
+            my $urlCandidate;
+
+            foreach my $subField (@urlObject){
+              if ($subField eq 'y' && $urlObject[$subfPos+1] ne 'Registrierungslink') {
+                $validComment = 1;
+              }
+              if ($subField eq 'a') {
+                $urlCandidate = $urlObject[$subfPos+1];
+              }
+              $subfPos++;
             }
-            if ($subField eq 'a') {
-              $urlCandidate = $urlObject[$subfPos+1];
+
+            if ($validComment) {
+              $tipp_url = $urlCandidate;
+              $logger->debug("Exemplar-URL: $tipp_url");
             }
-            $subfPos++;
           }
 
-          if ($validComment) {
-            $tipp_url = $urlCandidate;
+          my $uri = URI->new($tipp_url);
+
+          if($uri && $uri->has_recognized_scheme){
+
+            $host = $uri->authority;
+            my $scheme = $uri->scheme;
+            $tipp{'url'} = $tipp_url;
+
+            if(!$host){
+              if($titleStats{'brokenURL'}){
+                $titleStats{'brokenURL'}++;
+              }
+              else{
+                $titleStats{'brokenURL'} = 1;
+              }
+              push @{ $titleWarnings{'all'} }, {
+                '209R[01]a'=> $tipp_url,
+                'comment' => 'Aus der URL konnte kein Host ermittelt werden.'
+              };
+
+              push @{ $titleWarnings{'gvk'} }, {
+                '209R[01]a'=> $tipp_url,
+                'comment' => 'Aus der URL konnte kein Host ermittelt werden.'
+              };
+
+              $logger->error("Could not extract host of URL $tipp_url");
+            }
+            else{
+              $hostUrl = "$scheme://$host";
+
+              $tipp{'platform'} = {
+                'name' => lc (substr($host, 0, 3) eq 'www' ? substr($host, 4) : $host),
+                'primaryUrl' => $hostUrl
+              };
+
+              $tipp{'coverage'} = [];
+
+              my %dates = (
+                  'startj' => (pica_value($packageItem, '231@j') || '0'),
+                  'startm' => (pica_value($packageItem, '231@c') || '0'),
+                  'startd' => (pica_value($packageItem, '231@b') || '0'),
+                  'endj' => (pica_value($packageItem, '231@k') || '0'),
+                  'endm' => (pica_value($packageItem, '231@m') || '0'),
+                  'endd' => (pica_value($packageItem, '231@l') || '0')
+              );
+
+              my @dts = transformDate(\%dates);
+
+              push @{ $tipp{'coverage'} }, {
+                'startDate' => convertToTimeStamp($dts[0][0], 0),
+                'startVolume' => (pica_value($packageItem, '231@d') || ""),
+                'startIssue' => (pica_value($packageItem, '231@e') || ""),
+                'endDate' => convertToTimeStamp($dts[0][1], 1),
+                'endVolume' => (pica_value($packageItem, '231@n') || ""),
+                'endIssue' => (pica_value($packageItem, '231@o') || ""),
+                'coverageDepth' => "fulltext",
+                'coverageNote' => ""
+              };
+
+              $tipp{'title'} = {
+                'identifiers' => \@{ $titleInfo{'identifiers'} },
+                'name' => $titleInfo{'name'},
+                'type' => $gokbType
+              };
+
+              push @tipps, \%tipp;
+            }
+          }
+          else {
+            $logger->warn("Looks like a wrong URL!");
+
+            if($titleStats{'brokenURL'}){
+              $titleStats{'brokenURL'}++;
+            }
+            else{
+              $titleStats{'brokenURL'} = 1;
+            }
+
+            push @{ $titleWarnings{'all'} }, {
+              '209R[01]a'=> $tipp_url,
+              'comment' => 'URL-Schema konnte nicht ermittelt werden!'
+            };
+
+            push @{ $titleWarnings{'gvk'} }, {
+              '209R[01]a'=> $tipp_url,
+              'comment' => 'URL-Schema konnte nicht ermittelt werden!'
+            };
+
+            $logger->error("Could not extract scheme of URL $tipp_url");
           }
         }
-      }
-      else {
-        $logger->debug("Exemplar bezieht sich auf anderes Paket $item_isil.");
-      }
-    }
-
-    $tipp{'url'} = $tipp_url;
-
-    my $uri = URI->new($tipp_url);
-
-    if($uri->has_recognized_scheme){
-
-      $host = $uri->authority;
-      my $scheme = $uri->scheme;
-
-      if(!$host){
-        if($titleStats{'brokenURL'}){
-          $titleStats{'brokenURL'}++;
+        else {
+          $logger->debug("Exemplar bezieht sich auf anderes Paket $item_isil.");
         }
-        else{
-          $titleStats{'brokenURL'} = 1;
-        }
-        push @{ $titleWarnings{'all'} }, {
-          '209R[01]a'=> $tipp_url,
-          'comment' => 'Aus der URL konnte kein Host ermittelt werden.'
-        };
-
-        push @{ $titleWarnings{'gvk'} }, {
-          '209R[01]a'=> $tipp_url,
-          'comment' => 'Aus der URL konnte kein Host ermittelt werden.'
-        };
-
-        $logger->error("Could not extract host of URL $tipp_url");
-        $invalid = 1;
       }
-      else{
-        $hostUrl = "$scheme://$host";
-      }
-    }
-    else {
-      $logger->warn("Looks like a wrong URL!");
-
-      if($titleStats{'brokenURL'}){
-        $titleStats{'brokenURL'}++;
-      }
-      else{
-        $titleStats{'brokenURL'} = 1;
-      }
-
-      push @{ $titleWarnings{'all'} }, {
-        '209R[01]a'=> $tipp_url,
-        'comment' => 'URL-Schema konnte nicht ermittelt werden!'
-      };
-
-      push @{ $titleWarnings{'gvk'} }, {
-        '209R[01]a'=> $tipp_url,
-        'comment' => 'URL-Schema konnte nicht ermittelt werden!'
-      };
-
-      $logger->error("Could not extract scheme of URL $tipp_url");
-      $invalid = 1;
-    }
-
-    $tipp{'platform'} = {
-      'name' => lc (substr($host, 0, 3) eq 'www' ? substr($host, 4) : $host),
-      'primaryUrl' => $hostUrl
-    };
-
-    $tipp{'coverage'} = [];
-
-
-
-    my %dates = (
-        'startj' => (pica_value($packageItem, '231@j') || '0'),
-        'startm' => (pica_value($packageItem, '231@c') || '0'),
-        'startd' => (pica_value($packageItem, '231@b') || '0'),
-        'endj' => (pica_value($packageItem, '231@k') || '0'),
-        'endm' => (pica_value($packageItem, '231@m') || '0'),
-        'endd' => (pica_value($packageItem, '231@l') || '0')
-    );
-
-    my @dts = transformDate(\%dates);
-
-    push @{ $tipp{'coverage'} }, {
-      'startDate' => convertToTimeStamp($dts[0][0], 0),
-      'startVolume' => (pica_value($packageItem, '231@d') || ""),
-      'startIssue' => (pica_value($packageItem, '231@e') || ""),
-      'endDate' => convertToTimeStamp($dts[0][1], 1),
-      'endVolume' => (pica_value($packageItem, '231@n') || ""),
-      'endIssue' => (pica_value($packageItem, '231@o') || ""),
-      'coverageDepth' => "fulltext",
-      'coverageNote' => ""
-    };
-
-    $tipp{'title'} = {
-      'identifiers' => \@{ $titleInfo{'identifiers'} },
-      'name' => $titleInfo{'name'},
-      'type' => $gokbType
-    };
-
-    if (!$invalid) {
-      push @tipps, \%tipp;
     }
   }
-  else {
+
+  if ($activeSource ne "fid" || scalar @tipps == 0) {
 
     my $numSources = scalar @onlineSources;
     my @skippedTipps = ();
