@@ -100,51 +100,33 @@ my $filter;
 
 ### logging
 
-# my $logFnDate = strftime '%Y-%m-%d', localtime;
-# my $logFn = 'logs_'.$logFnDate.'.log';
-#
-# $logDir->mkpath( { verbose => 0 } );
-#
-# my $logFile = $logDir->file($logFn);
-#
-# $logFile->touch();
-#
-# my $out_logs = $logFile->opena();
-#
-# my $tee = new IO::Tee(\*STDOUT, $out_logs);
-#
-# *STDERR = *$tee{IO};
-#
-# select $tee;
+my $conf = q(
 
+  log4perl.logger                    = DEBUG, Logfile, Screen
 
-  my $conf = q(
+  log4perl.filter.MatchFile      = Log::Log4perl::Filter::LevelRange
+  log4perl.filter.MatchFile.LevelMin = INFO
+  log4perl.filter.MatchFile.LevelMax = FATAL
+  log4perl.filter.MatchFile.AcceptOnMatch = true
+  log4perl.appender.Logfile          = Log::Log4perl::Appender::File
+  log4perl.appender.Logfile.Filter   = MatchFile
+  log4perl.appender.Logfile.filename = logs/test.log
+  log4perl.appender.Logfile.layout   = Log::Log4perl::Layout::PatternLayout
+  log4perl.appender.Logfile.layout.ConversionPattern = %d - %p (%L) -- %m%n
 
-    log4perl.logger                    = DEBUG, Logfile, Screen
+  log4perl.filter.MatchScreen      = Log::Log4perl::Filter::LevelRange
+  log4perl.filter.MatchScreen.LevelMin = DEBUG
+  log4perl.filter.MatchScreen.LevelMax = FATAL
+  log4perl.filter.MatchScreen.AcceptOnMatch = true
+  log4perl.appender.Screen         = Log::Log4perl::Appender::Screen
+  log4perl.appender.Screen.Filter  = MatchScreen
+  log4perl.appender.Screen.stderr  = 0
+  log4perl.appender.Screen.layout  = Log::Log4perl::Layout::PatternLayout
+  log4perl.appender.Screen.layout.ConversionPattern = %d - %p (%L) -- %m%n
+);
 
-    log4perl.filter.MatchFile      = Log::Log4perl::Filter::LevelRange
-    log4perl.filter.MatchFile.LevelMin = INFO
-    log4perl.filter.MatchFile.LevelMax = FATAL
-    log4perl.filter.MatchFile.AcceptOnMatch = true
-    log4perl.appender.Logfile          = Log::Log4perl::Appender::File
-    log4perl.appender.Logfile.Filter   = MatchFile
-    log4perl.appender.Logfile.filename = logs/test.log
-    log4perl.appender.Logfile.layout   = Log::Log4perl::Layout::PatternLayout
-    log4perl.appender.Logfile.layout.ConversionPattern = %d - %p (%L) -- %m%n
-
-    log4perl.filter.MatchScreen      = Log::Log4perl::Filter::LevelRange
-    log4perl.filter.MatchScreen.LevelMin = DEBUG
-    log4perl.filter.MatchScreen.LevelMax = FATAL
-    log4perl.filter.MatchScreen.AcceptOnMatch = true
-    log4perl.appender.Screen         = Log::Log4perl::Appender::Screen
-    log4perl.appender.Screen.Filter  = MatchScreen
-    log4perl.appender.Screen.stderr  = 0
-    log4perl.appender.Screen.layout  = Log::Log4perl::Layout::PatternLayout
-    log4perl.appender.Screen.layout.ConversionPattern = %d - %p (%L) -- %m%n
-  );
-
-     # ... passed as a reference to init()
-  Log::Log4perl::init( \$conf );
+# ... passed as a reference to init()
+Log::Log4perl::init( \$conf );
 
 my $logger = Log::Log4perl->get_logger();
 
@@ -197,7 +179,7 @@ my $endpoint = "gvk";
 my $newOrgs = 0;
 my $localPkg = 0;
 my $customTarget;
-my $owner = "Master";
+my $owner = "NL";
 
 my $argP = first_index { $_ eq '--packages' } @ARGV;
 my $argJ = first_index { $_ eq '--json' } @ARGV;
@@ -755,7 +737,6 @@ my %known;
 my %checkedUrls;
 
 sub createJSON {
-
   my $postData = shift;
   my $endpoint = shift;
   my $newOrgs = shift;
@@ -1120,15 +1101,7 @@ sub createJSON {
     $logger->info("$gStatKey: ".$globalStats{$gStatKey});
   }
   
-#   say $globalStats{'titlesTotal'}." relevante Titel in $packagesTotal Paketen";
-#   say $globalStats{'numNoUrl'}." Titel ohne relevante URL";
-#   say $globalStats{'duplicateISSNs'}." ZDB-ID-Änderungen ohne ISSN-Anpassung";
-#   say $globalStats{'wrongISSN'}." eISSNs als Parallel-ISSN (005P0)";
-#   say $globalStats{'noPublisher'}." Titel ohne Verlag (033An)";
-#   say $globalStats{'noPublisherMatch'}." Verlagsfelder mit der GOKb unbekanntem Verlagsnamen (033An)";
-#   say $globalStats{'pubFromGnd'}." Verlage durch GND-Verweis identifiziert (029Ga)";
-#   say $globalStats{'pubFromAuthor'}." als Verlag verwendete Autoren (021Ah)";
-#   say $globalStats{'pubFromCorp'}." als Verlag verwendete Primärkörperschaften (029Aa)";
+
 
   if($skippedPackages ne ""){
     $logger->warn("Wegen Fehler beim Upload übersprungene Pakete: $skippedPackages");
@@ -1320,93 +1293,7 @@ sub processPackage {
   my %packageHeader = %{$package{'packageHeader'}};
   my @toQuery = ();
   my %attrsScopes;
-#   my %attrsScopes = {
-#     gvk => {
-#       book => {
-#         query => 'pica.xpr='.$packageInfo{'sigel'}.' and pica.mak=Oa* sortBy year/sort.ascending',
-#         base => 'http://sru.gbv.de/gvk',
-#         recordSchema => 'picatitle',
-#         parser => 'picaxml',
-#         _max_results => 3
-#       },
-#       journal => {
-#         query => 'pica.xpr='.$packageInfo{'sigel'}.' and (pica.mak=Ob* or pica.mak=Od*) sortBy year/sort.ascending',
-#         base => 'http://sru.gbv.de/gvk',
-#         recordSchema => 'picatitle',
-#         parser => 'picaxml',
-#         _max_results => 3
-#       },
-#       all => {
-#         query => 'pica.xpr='.$packageInfo{'sigel'}.' and pica.mak=O* sortBy year/sort.ascending',
-#         base => 'http://sru.gbv.de/gvk',
-#         recordSchema => 'picatitle',
-#         parser => 'picaxml',
-#         _max_results => 3
-#       }
-#     },
-#     gbvcat => {
-#       book => {
-#         query => 'pica.xpr='.$packageInfo{'sigel'}.' and pica.mak=Oa* sortBy year/sort.ascending',
-#         base => 'http://sru.gbv.de/gbvcat',
-#         recordSchema => 'picatitle',
-#         parser => 'picaxml',
-#         _max_results => 3
-#       },
-#       journal => {
-#         query => 'pica.xpr='.$packageInfo{'sigel'}.' and (pica.mak=Ob* or pica.mak=Od*) sortBy year/sort.ascending',
-#         base => 'http://sru.gbv.de/gbvcat',
-#         recordSchema => 'picatitle',
-#         parser => 'picaxml',
-#         _max_results => 3
-#       },
-#       all => {
-#         query => 'pica.xpr='.$packageInfo{'sigel'}.'  and pica.mak=O* sortBy year/sort.ascending',
-#         base => 'http://sru.gbv.de/gbvcat',
-#         recordSchema => 'picatitle',
-#         parser => 'picaxml',
-#         _max_results => 3
-#       }
-#     },
-#     zdb => {
-#       all => {
-#         query => 'pica.xpr='.$packageInfo{'sigel'}.'  and pica.mak=O* sortBy year/sort.ascending',
-#         base => 'http://services.dnb.de/sru/zdb',
-#         recordSchema => 'PicaPlus-xml',
-#         parser => 'ppxml',
-#         _max_results => 3
-#       },
-#       journal => {
-#         query => 'pica.xpr='.$packageInfo{'sigel'}.'  and pica.mak=O* sortBy year/sort.ascending',
-#         base => 'http://services.dnb.de/sru/zdb',
-#         recordSchema => 'PicaPlus-xml',
-#         parser => 'ppxml',
-#         _max_results => 3
-#       }
-#     },
-#     natliz => {
-#       book => {
-#         query => 'pica.xpr='.$packageInfo{'sigel'}.' and pica.mak=Oa* sortBy year/sort.ascending',
-#         base => 'http://sru.gbv.de/natliz',
-#         recordSchema => 'picatitle',
-#         parser => 'picaxml',
-#         _max_results => 3
-#       },
-#       journal => {
-#         query => 'pica.xpr='.$packageInfo{'sigel'}.' and (pica.mak=Ob* or pica.mak=Od*) sortBy year/sort.ascending',
-#         base => 'http://sru.gbv.de/natlizzss',
-#         recordSchema => 'picatitle',
-#         parser => 'picaxml',
-#         _max_results => 3
-#       },
-#       database => {
-#         query => 'pica.xpr='.$packageInfo{'sigel'}.' and (pica.mak=Ob* or pica.mak=Od*) sortBy year/sort.ascending',
-#         base => 'http://sru.gbv.de/natlizfak',
-#         recordSchema => 'picatitle',
-#         parser => 'picaxml',
-#         _max_results => 3
-#       }
-#     }
-#   };
+
 
   $attrsScopes{'gvk'}{'book'} = {
     query => 'pica.xpr='.$packageInfo{'sigel'}.' and pica.mak=Oa*',
@@ -1590,6 +1477,7 @@ sub processPackage {
 sub processTitle {
   my ($titleRecord, $pkgType, $activeSource, %pkgInfo) = @_;
   my $materialType = pica_value($titleRecord, '002@0');
+  my $pkgFlag = pica_value($titleRecord, '013H0');
   my $typeChar = substr($materialType, 1, 1);
   my $isJournal = any {$_ eq $typeChar} ("b", "d");
   my $gokbType;
@@ -1610,6 +1498,13 @@ sub processTitle {
     'gvk' => [],
     'zdb' => []
   );
+
+    # Check for package flag
+
+  if($pkgFlag && $pkgFlag eq 'pt') {
+    $logger->debug("Überspringe Paketaufnahme $ppn...");
+    return \@tipps, \%titleStats, \%titleWarnings, \%titleInfo;
+  }
 
     # Process material code
 
@@ -1635,30 +1530,6 @@ sub processTitle {
   $titleInfo{'identifiers'} = [];
 
   ## PPN
-#   if($activeSource eq "gvk"){
-#     push @{ $titleInfo{'identifiers'} } , {
-#       'type' => "gvk_ppn",
-#       'value' => $ppn
-#     };
-#   }
-#   elsif($activeSource eq "zdb"){
-#     push @{ $titleInfo{'identifiers'} } , {
-#       'type' => "zdb_ppn",
-#       'value' => $ppn
-#     };
-#   }
-#   elsif($activeSource eq "natliz"){
-#     push @{ $titleInfo{'identifiers'} } , {
-#       'type' => "natliz_ppn",
-#       'value' => $ppn
-#     };
-#   }
-#   elsif($activeSource eq "gbvcat"){
-#     push @{ $titleInfo{'identifiers'} } , {
-#       'type' => "gbvcat_ppn",
-#       'value' => $ppn
-#     };
-#   }
 
   ## DOI
 
@@ -1780,23 +1651,7 @@ sub processTitle {
                 'value' => $eissn
               };
 
-#               if($allISSN{$eissn}){
-#                 say "eISSN $eissn in Titel $id wurde bereits vergeben!";
-# 
-#                 $titleStats{'duplicateISSNs'} ? $titleStats{'duplicateISSNs'}++ : $titleStats{'duplicateISSNs'} = 1;
-# 
-#                 push @{ $titleWarnings{'all'} }, {
-#                   '005A0' => $eissn,
-#                   'comment' => 'gleiche eISSN nach Titeländerung?'
-#                 };
-# 
-#                 push @{ $titleWarnings{'zdb'} }, {
-#                   '005A0' => $eissn,
-#                   'comment' => 'gleiche eISSN nach Titeländerung?'
-#                 };
-#               }
 
-#               $allISSN{$eissn} = pica_value($titleRecord, '021Aa');
             }
           }
           $subfPos++;
@@ -1929,25 +1784,7 @@ sub processTitle {
   $titleWarnings{'id'} = $id;
   ## Andere Identifier, z.B. OCLC-No.
 
-#       my @otherIdentifiers = @{ pica_fields($titleRecord, '006X') };
-#
-#       if(scalar @otherIdentifiers > 0){
-#         foreach my $otherID (@otherIdentifiers){
-#           my @otherID = @{ $otherID };
-#           my $subfPos = 0;
-#           foreach my $subField (@otherID){
-#             if($subField eq 'c'){
-#               push @{ $titleInfo{'identifiers'}} , {
-#                   'type' => $otherID[$subfPos+1],
-#                   'value' => $otherID[$subfPos+2] eq '0'
-#                     ? $otherID[$subfPos+3]
-#                     : ""
-#               };
-#             }
-#             $subfPos++;
-#           }
-#         }
-#       }
+
 
   # Check, if the title is a journal
   # (shouldn't be necessary since it should be included in the search query)
@@ -2827,10 +2664,7 @@ sub processTitle {
               }
             }
           }
-#           push @{ $relObj{'identifiers'} } , {
-#             'type' => "gvk_ppn",
-#             'value' => $relPPN
-#           };
+
         }
         elsif($activeSource eq "zdb"){
           if(pica_value($relRecord, '017B')){
@@ -2842,10 +2676,7 @@ sub processTitle {
               }
             }
           }
-#           push @{ $relObj{'identifiers'} } , {
-#             'type' => "zdb_ppn",
-#             'value' => $relPPN
-#           };
+
         }
         if(pica_value($relRecord, '039E')){
           my @relRelatedTitles = @{ pica_fields($relRecord, '039E') };
@@ -3943,34 +3774,7 @@ sub processTipp {
     else{
       $hostUrl = "$scheme://$host";
 
-#       my $checkedUrl;
-# 
-#       if ($checkedUrls{$hostUrl}){
-#         $checkedUrl = $checkedUrls{$hostUrl};
-#       }
-#       else{
-#         $checkedUrl = checkUrl($hostUrl);
-#         $checkedUrls{$hostUrl} = $checkedUrl;
-#       }
-# 
-#       if (!$checkedUrl && !$tipp{'action'}) {
-#         if($tippStats{'invalidURL'}){
-#           $tippStats{'invalidURL'}++;
-#         }
-#         else{
-#           $tippStats{'invalidURL'} = 1;
-#         }
-# 
-#         push @{ $tippWarnings{'all'} }, {
-#           '009P0'=> $sourceURL,
-#           'comment' => 'Die Domain der angegebenen URL scheint nicht mehr zu existieren.'
-#         };
-# 
-#         push @{ $tippWarnings{'zdb'} }, {
-#           '009Qx'=> $sourceURL,
-#           'comment' => 'Die Domain der angegebenen URL scheint nicht mehr zu existieren.'
-#         };
-#       }
+
     }
   }
   elsif (!$tipp{'action'}) {
@@ -4110,6 +3914,10 @@ sub postData {
   my $endPointType = shift;
   my $data = shift;
   my $endPoint = $gokbCreds{'base'}."integration/".$endPointType;
+
+  if($endPointType eq 'crossReferencePackage' || $endPointType eq 'crossReferenceTitle') {
+    $endPoint .= "?async=true&fullsync=true";
+  }
   
   if($data){
   
@@ -4132,6 +3940,7 @@ sub postData {
     my $req = HTTP::Request->new(POST => $endPoint);
 
     $req->header('content-type' => 'application/json');
+    $req->header('accept' => 'application/json');
     $req->authorization_basic($gokbCreds{'username'}, $gokbCreds{'password'});
 
     if(ref($data) eq 'HASH') {
@@ -4145,28 +3954,88 @@ sub postData {
 
     my $resp_content = decode_json($resp->content);
     my @arrayResponse;
-    my %hashResponse;
+    my $hashResponse;
+    my $responseString;
+    my $jobId;
 
     if (ref($resp_content) eq 'ARRAY') {
       @arrayResponse = @{$resp_content};
     }
+    elsif (ref($resp_content) eq 'HASH'){
+      $hashResponse = $resp_content;
+    }
     else {
-      %hashResponse = %{$resp_content};
+      $logger->info("Got result: $resp_content");
     }
 
     if($resp->is_success){
 
-      if($endPointType eq 'crossReferencePackage'){
+      if($endPointType eq 'crossReferencePackage' || $endPointType eq 'crossReferenceTitle'){
+        $jobId = $hashResponse->{'job_id'};
 
-        my $rspMsg = $hashResponse{'message'} ? $hashResponse{'message'} : "none";
+        my $jobUrl = $gokbCreds{'base'}."integration/getJobInfo/$jobId";
+        my $jobRec = HTTP::Request->new(GET => $jobUrl);
+        my $finished;
 
-        $logger->info("Commit of package successful.");
-        $logger->info("HTTP POST result: ", $hashResponse{'result'});
-        $logger->info("HTTP POST message: ", $rspMsg);
+        $jobRec->authorization_basic($gokbCreds{'username'}, $gokbCreds{'password'});
+
+        while (!$finished) {
+          sleep(2);
+          my $jobResp = $ua->request($jobRec);
+          my $job_content = decode_json($jobResp->content);
+
+          if ($job_content->{'finished'}) {
+            $finished = 1;
+            my $results = $job_content->{'job_result'};
+
+            if ($endPointType eq 'crossReferencePackage') {
+              if ($results->{'result'} eq 'ERROR'){
+                $logger->error($results->{'message'});
+                foreach my $error (@{$results->${'errors'}}) {
+                  $logger->error($error->{'message'});
+                }
+              }
+              else {
+                $logger->info($results->{'message'});
+              }
+            }
+            else {
+              if ($job_content->{'result'} eq 'ERROR') {
+                $logger->error($job_content->${'message'});
+              }
+              else {
+                my $total = scalar @{$results->{'results'}};
+                my $errors = 0;
+                foreach my $titleResult (@{$results->{'results'}}) {
+                  if ($titleResult->{'result'} eq 'ERROR') {
+                    $errors += 1;
+                    $logger->error($titleResult->{'message'});
+
+                    if ($titleResult->{'errors'}) {
+                      foreach my $error (@{$titleResult->{'errors'}}) {
+                        $logger->error($error);
+                      }
+                    }
+                  }
+                }
+                $logger->info("Finished sending title data: $total total, $errors errors ..")
+              }
+            }
+          }
+          else {
+            $logger->info("Processing .. ".$job_content->{'progress'}."% ");
+          }
+        }
+      }
+      elsif($hashResponse && $hashResponse->{'results'}) {
+        foreach my $responseItem (@{$hashResponse->{'results'}}) {
+          if ($responseItem->{'result'} eq 'ERROR') {
+            $logger->error($responseItem->{'message'});
+          }
+        }
       }
 
       return 0;
-      
     }
     else{
       $logger->error("HTTP POST error code: ".$resp->code);
@@ -4175,11 +4044,11 @@ sub postData {
         $logger->error("HTTP POST error message: ".$resp->message);
       }
       
-      if(%hashResponse) {
-        $logger->error("HTTP POST error message:".$hashResponse{'message'});
+      if($hashResponse) {
+        $logger->error("HTTP POST error message:".$hashResponse->{'message'});
 
-        if ($hashResponse{'errors'}) {
-          foreach my $eObj (@{$hashResponse{'errors'}}) {
+        if ($hashResponse->{'errors'}) {
+          foreach my $eObj (@{$hashResponse->{'errors'}}) {
             my %eObj = %{$eObj};
             $logger->error("Error:".$eObj{'message'});
           }
@@ -4306,10 +4175,7 @@ sub matchExistingOrgs {
         }
         
 
-#         if(scalar @res == 1){
-#           $publisherMatch = $res[0]{'label'};
-#           say STDOUT "Matched Org $publisherMatch for given Org $pubName!";
-#         }
+
 
       }
       else{
