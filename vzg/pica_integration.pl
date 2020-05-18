@@ -3916,7 +3916,7 @@ sub postData {
   my $endPoint = $gokbCreds{'base'}."integration/".$endPointType;
 
   if($endPointType eq 'crossReferencePackage' || $endPointType eq 'crossReferenceTitle') {
-    $endPoint .= "?async=true&fullsync=true";
+    $endPoint .= "?async=true";
   }
   
   if($data){
@@ -3991,7 +3991,7 @@ sub postData {
             if ($endPointType eq 'crossReferencePackage') {
               if ($results->{'result'} eq 'ERROR'){
                 $logger->error($results->{'message'});
-                foreach my $error (@{$results->${'errors'}}) {
+                foreach my $error (@{$results->{'errors'}}) {
                   $logger->error($error->{'message'});
                 }
               }
@@ -4011,9 +4011,17 @@ sub postData {
                     $errors += 1;
                     $logger->error($titleResult->{'message'});
 
-                    if ($titleResult->{'errors'}) {
+                    if ($titleResult->{'errors'} && ref($titleResult->{'errors'}) eq 'ARRAY') {
                       foreach my $error (@{$titleResult->{'errors'}}) {
                         $logger->error($error);
+                      }
+                    }
+                    elsif ($titleResult->{'errors'} && ref($titleResult->{'errors'}) eq 'STRING') {
+                      $logger->error($titleResult->{'errors'});
+                    }
+                    elsif ($titleResult->{'errors'} && ref($titleResult->{'errors'}) eq 'HASH') {
+                      foreach my $error ($titleResult->{'errors'}) {
+                        print Dumper($error);
                       }
                     }
                   }
