@@ -17,7 +17,7 @@
 # --endpoint
 #  * ändert die Datenquelle für Titeldaten
 #  * weglassen für Standardbezug über VZG-SRU
-#  * Mögliche Werte: "zdb","natliz","gvk" (Standard), "gbvcat" (Zugriffsbeschränkt)
+#  * Mögliche Werte: "zdb","natliz","gvk" (Standard), "fid", "gbvcat" (Zugriffsbeschränkt), "ebp" (Zugriffbeschränkt)
 # --post (URL)
 #  * überträgt die ausgewählten Pakete an eine GOKb-Instanz
 #  * folgt keine URL, wird die localhost Standard-Adresse verwendet
@@ -27,7 +27,7 @@
 #  * funktioniert nur in Verbindung mit --post
 # --pub_type (Materialart)
 #  * Schränkt die verarbeitete Materialart ein
-#  * Mögliche Werte: 'journal' (Standard), 'book', 'all'
+#  * Mögliche Werte: 'all' (Standard), 'book', 'journal'
 # --local_pkg
 #  * Statt dem Datenbezug über die ZDB wird ein bereits lokal im GOKb-JSON-Format vorhandenes Paket und dessen Titeldaten an die GOKb geschickt
 #  * nur zulässig in Verbindung mit --post UND --json mit Sigel
@@ -86,7 +86,7 @@ my @allTitles;
 
 ## Nur Zeitschriften?
 
-my $requestedType = "journal";
+my $requestedType = "all";
 
 ## Name der JSON-Datei mit Paketinformationen
 
@@ -216,7 +216,7 @@ if($argLocal >= 0){
 }
 
 if($argEndpoint >= 0) {
-  if($ARGV[$argEndpoint+1] && any { $_ eq $ARGV[$argEndpoint+1] } ("zdb","natliz","gvk","gbvcat","fid") ) {
+  if($ARGV[$argEndpoint+1] && any { $_ eq $ARGV[$argEndpoint+1] } ("zdb","natliz","gvk","gbvcat","fid","ebp") ) {
     $endpoint = $ARGV[$argEndpoint+1];
   }
   else{
@@ -349,7 +349,7 @@ if(scalar @ARGV == 0 || (!$argJ && !$argP)){
   say STDOUT "Mögliche Parameter sind:";
   say STDOUT "'--packages \"data_source,username,password\"'";
   say STDOUT "'--json [\"Sigel\"]'";
-  say STDOUT "'--endpoint zdb|gvk|natliz'";
+  say STDOUT "'--endpoint zdb|gvk|natliz|fid|ebp'";
   say STDOUT "'--post [\"URL\"]'";
   say STDOUT "'--new_orgs'";
   say STDOUT "'--pub_type journal|book|all'";
@@ -977,21 +977,21 @@ sub createJSON {
     }
 
     if($postData == 1){
-      sleep 10;
+      sleep 2;
 
       # Submit collected titles to GOKb
 
-      my $sumTitles = scalar @packageTitles;
+      # my $sumTitles = scalar @packageTitles;
 
-      $logger->info("Submitting $sumTitles titles to GOKb (".$gokbCreds{'base'}.")");
+      # $logger->info("Submitting $sumTitles titles to GOKb (".$gokbCreds{'base'}.")");
 
-      my $titlePostResult = postData('crossReferenceTitle', \@packageTitles);
+      # my $titlePostResult = postData('crossReferenceTitle', \@packageTitles);
 
-      if($titlePostResult != 0){
-        $logger->error("Error uploading title! Errorcode $titlePostResult");
-      }
+      # if($titlePostResult != 0){
+      #   $logger->error("Error uploading title! Errorcode $titlePostResult");
+      # }
 
-      sleep 2;
+      # sleep 2;
 
       $logger->info("Submitting Package $sigel to GOKb (".$gokbCreds{'base'}.")");
 
@@ -1255,9 +1255,23 @@ sub processPackage {
       normname => "FID_SRU"
     );
   }
-  my $pkgNoProv = "$pkgName: ".($owner ne "Master" ? $owner : $pkgType);
+  elsif($endpoint eq 'ebp') {
+    %pkgSource = (
+      url => "http://sru.k10plus.de/opac-de-627-1",
+      name => "EBP-SRU",
+      normname => "EBP_SRU"
+    );
+  }
 
-  my @curGroups = ("LAS:eR", "VZG", "ZDB");
+  my $isConsortial = ($packageInfo{'sigel'} =~ /ZDB-1-/ ? 1 : 0);
+  
+  my $pkgNoProv = $pkgName;
+
+  if ($isConsortial != 0) {
+    $pkgNoProv = "$pkgName: ".($owner ne "Master" ? $owner : $pkgType);
+  }
+
+  my @curGroups = ("VZG");
 
   if($pkgType eq "NL") {
     push @curGroups, 'NL-DE';
@@ -1267,10 +1281,9 @@ sub processPackage {
   }
 
   $package{'packageHeader'} = {
-    name => ($provider ?  "$provider: " : "")."$pkgName: ".($owner ne "Master" ? $owner : $pkgType),
+    name => ($provider ?  "$provider: " : "").$pkgNoProv,
     identifiers => [{ type => "isil", value => $packageInfo{'sigel'} }],
     additionalProperties => [],
-    variantNames => [$provider ne "" ? $pkgNoProv : ""],
     scope => "",
     listStatus => "In Progress",
     editStatus => "In Progress",
@@ -1278,7 +1291,7 @@ sub processPackage {
     consistent => "Yes",
     fixed => "No",
     paymentType => "",
-    global => "Consortium",
+    global => ($isConsortial ? "Consortium" : "Global"),
     listVerifier => "",
     userListVerifier => $userListVer,
     nominalPlatform => \%pkgPlatform,
@@ -1406,6 +1419,20 @@ sub processPackage {
     parser => 'picaxml',
     _max_results => 3
   };
+
+  $attrsScopes{'ebp'}{'all'} = {
+    query => 'pica.xpr='.$packageInfo{'sigel'},
+    base => 'http://sru.k10plus.de/opac-de-627-1',
+    recordSchema => 'picaxml',
+    parser => 'picaxml'
+  };
+
+  $attrsScopes{'ebp'}{'book'} = {
+    query => 'pica.xpr='.$packageInfo{'sigel'},
+    base => 'http://sru.k10plus.de/opac-de-627-1',
+    recordSchema => 'picaxml',
+    parser => 'picaxml'
+  };
   
   if ($endpoint eq "natliz" && $requestedType eq 'all') {
     push @toQuery, $attrsScopes{$endpoint}{'book'};
@@ -1530,6 +1557,10 @@ sub processTitle {
   $titleInfo{'identifiers'} = [];
 
   ## PPN
+
+  if ($activeSource eq "ebp") {
+    $titleInfo{'ebp'} = $ppn;
+  }
 
   ## DOI
 
@@ -1732,7 +1763,7 @@ sub processTitle {
     $id = $ppn;
     my $numIsbn = 0;
 
-    if(pica_value($titleRecord, '004AA')){
+    if(pica_value($titleRecord, '004A')){
       my @isbnValues = @{pica_fields($titleRecord, '004A')};
       
       foreach my $isbnValue (@isbnValues) {
@@ -1744,6 +1775,15 @@ sub processTitle {
         foreach my $subField (@isbnValue) {
         
           if($subField eq 'A'){
+            if(!$isbn){
+              $isbn = $isbnValue[$subfPos+1];
+              $isbn =~ s/-\s//g;
+            }
+            else{
+              $logger->error("Mehrere ISBNs in einem PICA-Feld!");
+            }
+          }
+          if($subField eq '0'){
             if(!$isbn){
               $isbn = $isbnValue[$subfPos+1];
               $isbn =~ s/-\s//g;
@@ -1765,6 +1805,10 @@ sub processTitle {
           };
           $numIsbn++;
         }
+      }
+
+      if (pica_value($titleRecord, '028Aa')) {
+        $titleInfo{'firstAuthor'} = pica_value($titleRecord, '028Aa');
       }
     }
 
@@ -1797,7 +1841,21 @@ sub processTitle {
 
   # -------------------- Title --------------------
 
-  if(pica_value($titleRecord, '025@a')){
+  if(pica_value($titleRecord, '021Ca')){
+    my $titleField = pica_value($titleRecord, '021Aa');
+
+    if($titleField =~ /@/){
+      $titleField =~ s/@//;
+    }
+    $titleInfo{'name'} = $titleField;
+
+    if(pica_value($titleRecord, '021Ad') && $typeChar eq 'a'){
+      $titleInfo{'name'} .= " - ".pica_value($titleRecord, '021Ad');
+    }
+
+    $titleInfo{'name'} .= " - ".pica_value($titleRecord, '021Ca');
+  } 
+  elsif(pica_value($titleRecord, '025@a')){
     my $titleField = pica_value($titleRecord, '025@a');
 
     if($titleField =~ /@/){
@@ -2724,7 +2782,7 @@ sub processTitle {
 
           push @{ $relObj{'identifiers'} }, { 'type' => "zdb", 'value' => $relatedID };
 
-          if($activeSource eq "gvk" || $activeSource eq "natliz" || $activeSource eq "gbvcat"){
+          if($activeSource eq "gvk" || $activeSource eq "natliz" || $activeSource eq "gbvcat" || $activeSource eq "ebp"){
             if(pica_value($relRecord, '004V0')){
               push @{ $relObj{'identifiers'} }, { 'type' => "doi", 'value' => pica_value($relRecord, '004V0') };
             }
@@ -3027,6 +3085,11 @@ sub processTitle {
       push @onlineSources, @{pica_fields($titleRecord, '009P[05]')};
     }
   }
+  elsif($activeSource eq "ebp") {
+    if(pica_value($titleRecord, '017C')) {
+      push @onlineSources, @{pica_fields($titleRecord, '017C')};
+    }
+  }
 
   if($activeSource eq "fid"){
     my %tipp;
@@ -3133,11 +3196,7 @@ sub processTitle {
                 'coverageNote' => ""
               };
 
-              $tipp{'title'} = {
-                'identifiers' => \@{ $titleInfo{'identifiers'} },
-                'name' => $titleInfo{'name'},
-                'type' => $gokbType
-              };
+              $tipp{'title'} = \%titleInfo;
 
               push @tipps, \%tipp;
             }
@@ -3180,7 +3239,7 @@ sub processTitle {
 
     foreach my $eSource (@onlineSources){
 
-      my ($tipp, $tippWarnings, $tippStats, $tippComments) = processTipp($eSource, $pkgType, $gokbType, $activeSource, %titleInfo);
+      my ($tipp, $tippWarnings, $tippStats, $tippComments) = processTipp($eSource, $pkgType, $gokbType, $activeSource, $pkgInfo{'nominalPlatform'}, %titleInfo);
 
       my %tipp = %{$tipp};
       my %tippWarnings = %{$tippWarnings};
@@ -3462,11 +3521,7 @@ sub processTitle {
           },
           'url' => $packagePlatformUrl,
           'status' => "Current",
-          'title' => {
-            'identifiers' => \@{$titleInfo{'identifiers'}},
-            'name' => $titleInfo{'name'},
-            'type' => $gokbType
-          }
+          'title' => \%titleInfo
         }
       }
       else{
@@ -3478,11 +3533,7 @@ sub processTitle {
           },
           'url' => $packagePlatformUrl,
           'status' => "Current",
-          'title' => {
-            'identifiers' => \@{$titleInfo{'identifiers'}},
-            'name' => $titleInfo{'name'},
-            'type' => $gokbType
-          }
+          'title' => \%titleInfo
         }
       }
     }
@@ -3544,7 +3595,7 @@ sub processTitle {
 
 sub processTipp {
   my %tipp;
-  my ($eSource, $pkgType, $gokbType, $activeSource, %titleInfo) = @_;
+  my ($eSource, $pkgType, $gokbType, $activeSource, $platformInfo, %titleInfo) = @_;
   my @eSource = @{$eSource};
   my %tippStats;
   
@@ -3803,10 +3854,15 @@ sub processTipp {
     return (\%tipp, \%tippWarnings, \%tippStats, \%tippComments);
   }
 
-  $tipp{'platform'} = {
-    'name' => lc (substr($host, 0, 3) eq 'www' ? substr($host, 4) : $host),
-    'primaryUrl' => $hostUrl
-  };
+  if ($host =~  /doi\.org/ && $platformInfo) {
+    $tipp{'platform'} = \%{$platformInfo};
+  }
+  else {
+    $tipp{'platform'} = {
+      'name' => lc (substr($host, 0, 3) eq 'www' ? substr($host, 4) : $host),
+      'primaryUrl' => $hostUrl
+    };
+  }
 
   # -------------------- Coverage --------------------
 
@@ -3897,13 +3953,18 @@ sub processTipp {
     'embargo' => ""
   };
 
+  if($titleInfo{'ebp'}) {
+    $tipp{'identifiers'} = [];
+
+    push @{ $tipp{'identifiers'}} , {
+      'type' => 'epb',
+      'value' => $titleInfo{'ebp'}
+    };
+  }
+
   # -------------------- TitleInstance (in TIPP) --------------------
 
-  $tipp{'title'} = {
-    'identifiers' => \@{ $titleInfo{'identifiers'} },
-    'name' => $titleInfo{'name'},
-    'type' => $gokbType
-  };
+  $tipp{'title'} = \%titleInfo;
 
   return (\%tipp, \%tippWarnings, \%tippStats, \%tippComments);
 }
@@ -3993,6 +4054,14 @@ sub postData {
                 $logger->error($results->{'message'});
                 foreach my $error (@{$results->{'errors'}}) {
                   $logger->error($error->{'message'});
+
+                  if ($error->{'errors'}) {
+                    foreach my $field (keys %{$error->{'errors'}}) {
+                      foreach my $fieldError (@{$error->{'errors'}->{$field}}) {
+                        $logger->error($fieldError->{'message'});
+                      }
+                    }
+                  }
                 }
               }
               else {
