@@ -35,6 +35,8 @@
 #  * Dateiname Paket: "./packages/[SIGEL]_[endpoint].json"
 # --pkg_owner
 #  * Bestimmt den letzten Teil des Paketnamens
+# --login_file
+#  * Spezifiziert einen abweichenden Namen einer JSON-Datei mit Login-Informationen
 
 use v5.22;
 use strict;
@@ -143,7 +145,7 @@ my $ncsu_orgs = do {
 
 my %orgsJSON = %{decode_json($ncsu_orgs)}
   or $logger->logdie("Konnte JSON mit NCSU-Orgs nicht dekodieren!");
-  
+
 my $matchOrgsByFile = 0;
 
 # Check for login configuration
@@ -151,10 +153,31 @@ my $matchOrgsByFile = 0;
 my %cmsCreds;
 my %gokbCreds;
 
-if(-e 'login.json'){
+# Handle parameters
+
+my $endpoint = "gvk";
+my $newOrgs = 0;
+my $localPkg = 0;
+my %resolvedPlatform;
+my $customTarget;
+my $owner = "";
+
+my $argP = first_index { $_ eq '--packages' } @ARGV;
+my $argJ = first_index { $_ eq '--json' } @ARGV;
+my $argPost = first_index { $_ eq '--post' } @ARGV;
+my $argEndpoint = first_index { $_ eq '--endpoint' } @ARGV;
+my $argNewOrgs = first_index { $_ eq '--new_orgs' } @ARGV;
+my $argType = first_index { $_ eq '--pub_type' } @ARGV;
+my $argLocal = first_index { $_ eq '--local_pkg' } @ARGV;
+my $argOwner = first_index { $_ eq '--pkg_owner' } @ARGV;
+my $argCreds = first_index { $_ eq '--login_file' } @ARGV;
+
+my $loginFn = $argCreds >= 0 ? $ARGV[$argCreds+1] : 'login.json';
+
+if(-e $loginFn){
   my $login_data = do {
-    open(my $logins, '<' , "login.json")
-        or $logger->logdie("Can't open login.json: $!");
+    open(my $logins, '<' , $loginFn)
+        or $logger->logdie("Can't open login file: $!");
 
     local $/;
 
@@ -172,23 +195,6 @@ if(-e 'login.json'){
     %gokbCreds = %{ $logins{'gokb'} };
   }
 }
-
-# Handle parameters
-
-my $endpoint = "gvk";
-my $newOrgs = 0;
-my $localPkg = 0;
-my $customTarget;
-my $owner = "NL";
-
-my $argP = first_index { $_ eq '--packages' } @ARGV;
-my $argJ = first_index { $_ eq '--json' } @ARGV;
-my $argPost = first_index { $_ eq '--post' } @ARGV;
-my $argEndpoint = first_index { $_ eq '--endpoint' } @ARGV;
-my $argNewOrgs = first_index { $_ eq '--new_orgs' } @ARGV;
-my $argType = first_index { $_ eq '--pub_type' } @ARGV;
-my $argLocal = first_index { $_ eq '--local_pkg' } @ARGV;
-my $argOwner = first_index { $_ eq '--pkg_owner' } @ARGV;
 
 if($ARGV[$argPost+1] && index($ARGV[$argPost+1], "http") == 0){
   $gokbCreds{'base'} = $ARGV[$argPost+1];
@@ -414,7 +420,7 @@ sub getZdbName {
         $pkgInfos{'type'} = pica_value($packageInstance, '035Pi')
           ? pica_value($packageInstance, '035Pi')
           : "";
-          
+
         $pkgInfos{'provider'} =~ s/Anbieter: //;
 
         if(index($pkgInfos{'provider'}, ";") >= 0){
@@ -422,11 +428,11 @@ sub getZdbName {
           $pkgInfos{'provider'} =~ s/^\s+|\s+$//g;
           $pkgInfos{'platform'} =~ s/^\s+|\s+$//g;
         }
-        
+
         if(pica_value($packageInstance, '035Pe') && looks_like_number(pica_value($packageInstance, '035Pe'))){
           $pkgInfos{'numTotal'} = pica_value($packageInstance, '035Pe');
         }
-        
+
         if(pica_value($packageInstance, '035Pf') && looks_like_number(pica_value($packageInstance, '035Pf'))){
           $pkgInfos{'numZDB'} = pica_value($packageInstance, '035Pf');
         }
@@ -741,7 +747,7 @@ sub createJSON {
   my $endpoint = shift;
   my $newOrgs = shift;
   my $localPkg = shift;
-  
+
   if($localPkg && !$filter){
     $logger->logdie("Für die Verwendung bestehender JSON-Dateien muss ein Paketsigel hinter '--json' angegeben werden!");
   }
@@ -825,7 +831,7 @@ sub createJSON {
   my %authorityNotes;
   my %authorityNotesZDB;
   my %authorityNotesGVK;
-  
+
   my $out_warnings;
   my $out_warnings_zdb;
   my $out_warnings_gvk;
@@ -837,7 +843,7 @@ sub createJSON {
   if($filter){
     $warningDir = $warningDir->subdir($filter);
     $warningDir->mkpath({verbose => 0});
-    
+
     $orgsDir = $orgsDir->subdir($filter);
     $orgsDir->mkpath({verbose => 0});
   }
@@ -879,25 +885,25 @@ sub createJSON {
   my $noTipps = "";
 
   foreach my $sigel (keys %knownSelection){
-  
+
     $logger->info("Processing Package ".($packagesTotal + 1).", ".$sigel."...");
-    
+
     my $pkgScope = $knownSelection{$sigel}{'scope'};
     my $noZdbOrgs = 0;
-    
+
     my $packageFile = $packageDir->file($sigel."_".$endpoint.".json");
-    
+
     if($knownSelection{$sigel}{'zdbOrgs'} && scalar @{$knownSelection{$sigel}{'zdbOrgs'}} == 0){
       $noZdbOrgs = 1;
     }
-    
+
     if($requestedType eq "journal" && $pkgScope !~ /E-Journals/){
       $logger->info("Paket ist nicht als E-Journal-Paket markiert. Überspringe Paket.");
       next;
     }
     my %package;
     my @packageTitles;
-    
+
     if($localPkg == 1){
       $logger->debug("Verwende lokale Dateien..");
       my $json_pkg = do {
@@ -906,10 +912,10 @@ sub createJSON {
         local $/;
         <$json_fh>
       };
-    
+
       %package = %{decode_json($json_pkg)}
           or $logger->logdie("Paket-JSON nicht lesbar!");
-          
+
       if (scalar @{$package{'tipps'}} == 0){
         $logger->warn("Paket $sigel hat keine TIPPs und wird nicht angelegt!");
         $noTipps .= "$sigel ";
@@ -927,12 +933,12 @@ sub createJSON {
         @packageTitles = @{decode_json($json_titles)}
             or $logger->warn("Titel-JSON konnte nicht gelesen werden!\n");
       }
-      
+
     }
     else{
-    
+
       my %currentPackageInfo = %{$knownSelection{$sigel}};
-      
+
       my ($package, $pkgStats, $pkgWarn, $packageTitles) = processPackage(%currentPackageInfo);
 
       %package = %{$package};
@@ -946,16 +952,16 @@ sub createJSON {
 
       my %pkgStats = %{$pkgStats};
       my %pkgWarn = %{$pkgWarn};
-      
-      
+
+
       $authorityNotes{$knownSelection{$sigel}{'authority'}}{$sigel}{'stats'} = \%pkgStats;
       $authorityNotesZDB{$knownSelection{$sigel}{'authority'}}{$sigel}{'stats'} = \%pkgStats;
       $authorityNotesGVK{$knownSelection{$sigel}{'authority'}}{$sigel}{'stats'} = \%pkgStats;
-      
+
       $authorityNotes{$knownSelection{$sigel}{'authority'}}{$sigel}{'warnings'} = $pkgWarn{'all'};
       $authorityNotesZDB{$knownSelection{$sigel}{'authority'}}{$sigel}{'warnings'} = $pkgWarn{'zdb'};
       $authorityNotesGVK{$knownSelection{$sigel}{'authority'}}{$sigel}{'warnings'} = $pkgWarn{'gvk'};
-      
+
       foreach my $pkgStat (keys %pkgStats){
         if (!$globalStats{$pkgStat}){
           $globalStats{$pkgStat} = $pkgStats{$pkgStat};
@@ -964,14 +970,14 @@ sub createJSON {
           $globalStats{$pkgStat} += $pkgStats{$pkgStat};
         }
       }
-      
+
       my $json_pkg = JSON->new->utf8->canonical;
       my $out_pkg;
-    
+
       if($filter){
         $packageFile->touch();
         $out_pkg = $packageFile->openw();
-        
+
         say $out_pkg $json_pkg->pretty(1)->encode( \%package );
       }
     }
@@ -1001,11 +1007,11 @@ sub createJSON {
 
       if($postResult != 0){
         $logger->error("Could not Upload Package $sigel! Errorcode $postResult");
-        
+
         if ($postResult != 403) {
           $logger->info("Giving it one more try!");
           sleep 10;
-          
+
           if(postData('crossReferencePackage', \%package) != 0){
             $logger->error("Second try failed as well. Adding to report..");
             $skippedPackages .= $sigel." ";
@@ -1021,7 +1027,7 @@ sub createJSON {
 
   # Write collected titles & orgs to file
   if($localPkg == 0){
-  
+
     # Write collected warnings to file
 
     say $out_warnings
@@ -1030,7 +1036,7 @@ sub createJSON {
       $json_warning_zdb->pretty(1)->encode(\%authorityNotesZDB);
     say $out_warnings_gvk
       $json_warning_gvk->pretty(1)->encode(\%authorityNotesGVK);
-      
+
     if($filter){
       $titlesFile->touch();
 
@@ -1049,17 +1055,17 @@ sub createJSON {
     $out_orgs = $orgsFile->openw();
 
     say $out_orgs $json_orgs->pretty(1)->encode( \%orgsToAdd );
-    
+
   }
   else{
-        
+
     my $json_orgs = do {
       open(my $json_fh, '<' , $orgsFile)
           or $logger->warn("Konnte \$ofileName\" nicht öffnen: $!\n");
       local $/;
       <$json_fh>
     };
-    
+
     if($json_orgs){
       %orgsToAdd = %{decode_json($json_orgs)}
           or $logger->warn("Org-JSON konnte nicht gelesen werden!\n");
@@ -1096,17 +1102,17 @@ sub createJSON {
   $logger->info("**********************");
 
   $logger->info("Run finished after $timeElapsed");
-  
+
   foreach my $gStatKey (keys %globalStats){
     $logger->info("$gStatKey: ".$globalStats{$gStatKey});
   }
-  
+
 
 
   if($skippedPackages ne ""){
     $logger->warn("Wegen Fehler beim Upload übersprungene Pakete: $skippedPackages");
   }
-  
+
   if($noTipps ne ""){
     $logger->warn("Pakete ohne TIPPs: $noTipps");
   }
@@ -1124,8 +1130,8 @@ sub createJSON {
 
 
   ################ PACKAGE ################
-  
-  
+
+
 sub processPackage {
   my %packageInfo = @_;
   my $currentTitle = 0;
@@ -1134,7 +1140,7 @@ sub processPackage {
   my @packageTitles;
   my %package;
   my %packageWarnings;
-  
+
   my %pkgStats = (
     'titlesTotal' => 0,
     'duplicateISSNs' => 0,
@@ -1157,7 +1163,7 @@ sub processPackage {
     'brokenURL' => 0,
     'doi' => 0
   );
-  
+
   ## Package Header
 
   my $userListVer = "";
@@ -1264,7 +1270,7 @@ sub processPackage {
   }
 
   my $isConsortial = ($packageInfo{'sigel'} =~ /ZDB-1-/ ? 1 : 0);
-  
+
   my $pkgNoProv = $pkgName;
 
   if ($isConsortial != 0) {
@@ -1297,12 +1303,11 @@ sub processPackage {
     nominalPlatform => \%pkgPlatform,
     nominalProvider => $provider,
     listVerifiedDate => $listVerDate,
-    source => \%pkgSource,
     curatoryGroups => \@curGroups,
   };
 
   $package{'tipps'} = [];
-  
+
   my %packageHeader = %{$package{'packageHeader'}};
   my @toQuery = ();
   my %attrsScopes;
@@ -1433,7 +1438,7 @@ sub processPackage {
     recordSchema => 'picaxml',
     parser => 'picaxml'
   };
-  
+
   if ($endpoint eq "natliz" && $requestedType eq 'all') {
     push @toQuery, $attrsScopes{$endpoint}{'book'};
     push @toQuery, $attrsScopes{$endpoint}{'journal'};
@@ -1442,7 +1447,7 @@ sub processPackage {
   else {
     push @toQuery, $attrsScopes{$endpoint}{$requestedType};
   }
-      
+
   foreach my $attrs (@toQuery) {
 
     my %attrs = %{$attrs};
@@ -1566,7 +1571,7 @@ sub processTitle {
 
   my $doi;
 
-  if($activeSource eq "gvk" || $activeSource eq "natliz" || $activeSource eq "gbvcat"){
+  if($activeSource eq "gvk" || $activeSource eq "natliz" || $activeSource eq "gbvcat" || $activeSource eq "ebp"){
     $doi = pica_value($titleRecord, '004V0');
   }
   else{
@@ -1762,18 +1767,19 @@ sub processTitle {
   elsif($gokbMedium eq "Book"){
     $id = $ppn;
     my $numIsbn = 0;
+    my @isbns;
 
     if(pica_value($titleRecord, '004A')){
       my @isbnValues = @{pica_fields($titleRecord, '004A')};
-      
+
       foreach my $isbnValue (@isbnValues) {
         my @isbnValue = @{ $isbnValue };
         my $isbn;
         my $isbnType;
         my $subfPos = 0;
-        
+
         foreach my $subField (@isbnValue) {
-        
+
           if($subField eq 'A'){
             if(!$isbn){
               $isbn = $isbnValue[$subfPos+1];
@@ -1798,7 +1804,7 @@ sub processTitle {
           $subfPos++;
         }
 
-        if ($isbn && (!$isbnType || $isbnType eq 'Online')) {
+        if ($isbn && length($isbn) == 13 && none {$_ == $isbn} @isbns && (!$isbnType || $isbnType eq 'Online' || $isbnType eq 'ebook' || $isbnType eq 'electronic bk.')) {
           push @{ $titleInfo{'identifiers'}} , {
             'type' => "isbn",
             'value' => $isbn
@@ -1854,7 +1860,7 @@ sub processTitle {
     }
 
     $titleInfo{'name'} .= " - ".pica_value($titleRecord, '021Ca');
-  } 
+  }
   elsif(pica_value($titleRecord, '025@a')){
     my $titleField = pica_value($titleRecord, '025@a');
 
@@ -1863,7 +1869,7 @@ sub processTitle {
       $logger->debug("Removed \@ from Title!");
     }
     $titleInfo{'name'} = $titleField;
-    
+
   }
   elsif(pica_value($titleRecord, '021Aa')){
     my $titleField = pica_value($titleRecord, '021Aa');
@@ -1876,7 +1882,7 @@ sub processTitle {
     if(pica_value($titleRecord, '021Ad') && $typeChar eq 'a'){
       $titleInfo{'name'} .= " - ".pica_value($titleRecord, '021Ad');
     }
-    
+
   }
   else{
     $logger->info("Keinen Titel für ".$ppn." erkannt, überspringe Titel!");
@@ -1916,8 +1922,6 @@ sub processTitle {
 
   if(pica_value($titleRecord, '036El')) {
     my ($volNumber) = pica_value($titleRecord, '036El') =~ /(\d+)/;
-
-    $logger->debug("Volume: $volNumber");
 
     if($volNumber) {
       $titleInfo{'volumeNumber'} = $volNumber;
@@ -2079,21 +2083,21 @@ sub processTitle {
   # -------------------- Publisher --------------------
 
   $titleInfo{'publisher_history'} = [];
-  
+
   my @possiblePubs = @{ pica_fields($titleRecord, '033A') };
   my $checkPubs = pica_value($titleRecord, '033An');
   my @altPubs = @{ pica_fields($titleRecord, '033B') };
-  
+
   push(@possiblePubs, @altPubs);
   my @gndPubs;
-  
+
   if($activeSource eq "gvk" || $activeSource eq "gbvcat"){
     @gndPubs = @{ pica_fields($titleRecord, '029G') };
   }
   elsif($activeSource eq "zdb"){
     @gndPubs = @{ pica_fields($titleRecord, '029A') };
   }
-  
+
   my $authorField = pica_value($titleRecord, '021Ah');
   my $titleCorpField = pica_value($titleRecord, '021Ae');
   my $corpField = pica_value($titleRecord, '029Aa');
@@ -2106,7 +2110,7 @@ sub processTitle {
       $titleStats{'noPublisher'} = 1;
     }
   }
-  
+
   if(scalar @possiblePubs > 0){
     foreach my $pub (@possiblePubs) {
       my @pub = @{ $pub };
@@ -2196,7 +2200,7 @@ sub processTitle {
       if($tempPub =~ /(^|\s)[pP]ubl\.?(\s|$)/){
 
         $tempPub =~ s/(^|\s)([pP]ubl)\.?(\s|$)/$1Pub$3/g;
-        
+
         if($titleStats{'correctedAbbrs'}){
           $titleStats{'correctedAbbrs'}++;
         }
@@ -2564,7 +2568,7 @@ sub processTitle {
                 '039Ed' => $relTitle[$subfPos+1],
                 'comment' => 'Datumsangaben gehören in Unterfeld f.'
               };
-              
+
               if($titleStats{'relDatesInD'}){
                 $titleStats{'relDatesInD'}++;
               }
@@ -2904,7 +2908,7 @@ sub processTitle {
             }]
         };
         $logger->debug("Added relation!");
-        
+
         if($titleStats{'usefulRelated'}){
           $titleStats{'usefulRelated'}++;
         }
@@ -2992,7 +2996,7 @@ sub processTitle {
                       'identifiers' => $titleInfo{'identifiers'}
                   }]
               };
-              
+
               if($titleStats{'usefulRelated'}){
                 $titleStats{'usefulRelated'}++;
               }
@@ -3013,14 +3017,14 @@ sub processTitle {
                     'identifiers' => $titleInfo{'identifiers'}
                 }]
             };
-            
+
             if($titleStats{'usefulRelated'}){
               $titleStats{'usefulRelated'}++;
             }
             else{
               $titleStats{'usefulRelated'} = 1;
             }
-            
+
             if($rStartYear && $rStartYear < $start_year){ # Vorg.
               push @{ $titleInfo{'historyEvents'} } , {
                   'date' => convertToTimeStamp($start_year, 0),
@@ -3483,9 +3487,11 @@ sub processTitle {
             delete $skTipp{'comment'};
             delete $skTipp{'licence'};
             delete $skTipp{'type'};
-            push @tipps, \%skTipp;
             if ( scalar @tipps > 0 ) {
               $logger->info("Got more than one Publisher-URL..");
+            }
+            else {
+              push @tipps, \%skTipp;
             }
           }
         }
@@ -3541,7 +3547,7 @@ sub processTitle {
   # -------------------- Warnings --------------------
 
   if(scalar @{$titleWarnings{'all'}} > 0){
-    
+
     push @{ $titleWarnings{'all'} }, {
         'title' => $titleInfo{'name'}
     };
@@ -3586,7 +3592,7 @@ sub processTitle {
     }
   }
   return \@tipps, \%titleStats, \%titleWarnings, \%titleInfo;
-  
+
 } ## End TitleInstance
 
 
@@ -3598,13 +3604,13 @@ sub processTipp {
   my ($eSource, $pkgType, $gokbType, $activeSource, $platformInfo, %titleInfo) = @_;
   my @eSource = @{$eSource};
   my %tippStats;
-  
+
   my %tippWarnings = (
     'all' => [],
     'zdb' => [],
     'gvk' => []
   );
-  
+
   my $sourceURL = "";
   my $viableURL = 0;
   my $internalComments = "";
@@ -3634,6 +3640,10 @@ sub processTipp {
     'G' => {
       'gvk' => 'Aggregator',
       'zdb' => 'G;'
+    },
+    'R' => {
+      'gvk' => 'Resolving-System',
+      'zdb' => 'R;'
     }
   );
 
@@ -3663,7 +3673,7 @@ sub processTipp {
           '009P0'=> $sourceURL,
           'comment' => "URL ist ungültig (':' nach http fehlt)"
         };
-          
+
         if($tippStats{'nlURLs'}){
           $tippStats{'nlURLs'}++;
         }
@@ -3696,16 +3706,16 @@ sub processTipp {
   else{
     $logger->debug("Considering URL: $sourceURL");
   }
-  
+
   my $internalCommentIsValid = 0;
-  
+
   if($activeSource eq "natliz" && $gokbType ne "Serial"){
     if($pkgType eq "NL"){
       $tippComments{'public'} = "NL";
     }
   }
 
-  if( $activeSource eq "gvk" || $activeSource eq "gbvcat" ){
+  if($activeSource eq "gvk" || $activeSource eq "gbvcat" || $activeSource eq "ebp"){
     while (my ($uType, $vCom) = each %validInternalComments ){
       my %vCom = %{$vCom};
 
@@ -3714,11 +3724,11 @@ sub processTipp {
         $tippComments{'internal'} = $uType;
       }
     }
-    
+
     if(!$internalComments){
       $internalCommentIsValid = 1;
     }
-    
+
   }
   elsif($activeSource eq "zdb"){
     while (my ($uType, $vCom) = each %validInternalComments ){
@@ -3742,7 +3752,7 @@ sub processTipp {
       else{
         $tippStats{'otherURLs'} = 1;
       }
-      
+
       $logger->debug("Skipping NL-TIPP.. wrong Public Comment: ",$tippComments{'public'},", (internal=$internalComments)");
       $tipp{'action'} = "skipped";
     }
@@ -3765,7 +3775,7 @@ sub processTipp {
   }
   else {
     if($internalCommentIsValid == 1 && $tippComments{'public'} ne "Deutschlandweit zugänglich" && $tippComments{'public'} ne "NL"){
-    
+
       if($tippStats{'otherURLs'}){
         $tippStats{'otherURLs'}++;
       }
@@ -3817,27 +3827,25 @@ sub processTipp {
         '009Qx'=> $sourceURL,
         'comment' => 'Aus der URL konnte kein Host ermittelt werden.'
       };
-      
+
       $logger->error("Could not extract host of URL $url");
       $tipp{'action'} = "error";
       return (\%tipp, \%tippWarnings, \%tippStats, \%tippComments);
     }
     else{
       $hostUrl = "$scheme://$host";
-
-
     }
   }
   elsif (!$tipp{'action'}) {
     $logger->warn("Looks like a wrong URL!");
-    
+
     if($tippStats{'brokenURL'}){
       $tippStats{'brokenURL'}++;
     }
     else{
       $tippStats{'brokenURL'} = 1;
     }
-    
+
     push @{ $tippWarnings{'all'} }, {
       '009P0'=> $sourceURL,
       'comment' => 'URL-Schema konnte nicht ermittelt werden!'
@@ -3847,15 +3855,19 @@ sub processTipp {
       '009Qx'=> $sourceURL,
       'comment' => 'URL-Schema konnte nicht ermittelt werden!'
     };
-    
+
     $logger->error("Could not extract scheme of URL $url");
     $tipp{'action'} = "error";
-  
+
     return (\%tipp, \%tippWarnings, \%tippStats, \%tippComments);
   }
 
-  if ($host =~  /doi\.org/ && $platformInfo) {
+  if ($host =~  /doi\.org/ && $platformInfo->{'name'}) {
     $tipp{'platform'} = \%{$platformInfo};
+  }
+  elsif (!$platformInfo->{'name'}) {
+    $logger->debug("Resolving DOI URL");
+    $tipp{'platform'} = resolveTippPlatform($url);
   }
   else {
     $tipp{'platform'} = {
@@ -3979,9 +3991,9 @@ sub postData {
   if($endPointType eq 'crossReferencePackage' || $endPointType eq 'crossReferenceTitle') {
     $endPoint .= "?async=true";
   }
-  
+
   if($data){
-  
+
     my $json_gokb = JSON->new->utf8->canonical;
 
     my %decData;
@@ -4010,7 +4022,7 @@ sub postData {
     else {
       $req->content($json_gokb->encode( \@decData ));
     }
-    
+
     my $resp = $ua->request($req);
 
     my $resp_content = decode_json($resp->content);
@@ -4047,55 +4059,61 @@ sub postData {
 
           if ($job_content->{'finished'}) {
             $finished = 1;
-            my $results = $job_content->{'job_result'};
 
-            if ($endPointType eq 'crossReferencePackage') {
-              if ($results->{'result'} eq 'ERROR'){
-                $logger->error($results->{'message'});
-                foreach my $error (@{$results->{'errors'}}) {
-                  $logger->error($error->{'message'});
-
-                  if ($error->{'errors'}) {
-                    foreach my $field (keys %{$error->{'errors'}}) {
-                      foreach my $fieldError (@{$error->{'errors'}->{$field}}) {
-                        $logger->error($fieldError->{'message'});
-                      }
-                    }
-                  }
-                }
-              }
-              else {
-                $logger->info($results->{'message'});
-              }
+            if($job_content->{'cancelled'}) {
+              $logger->info("Job cancelled after ".$job_content->{'progress'}."% ");
             }
             else {
-              if ($job_content->{'result'} eq 'ERROR') {
-                $logger->error($job_content->${'message'});
-              }
-              else {
-                my $total = scalar @{$results->{'results'}};
-                my $errors = 0;
-                foreach my $titleResult (@{$results->{'results'}}) {
-                  if ($titleResult->{'result'} eq 'ERROR') {
-                    $errors += 1;
-                    $logger->error($titleResult->{'message'});
+              my $results = $job_content->{'job_result'};
 
-                    if ($titleResult->{'errors'} && ref($titleResult->{'errors'}) eq 'ARRAY') {
-                      foreach my $error (@{$titleResult->{'errors'}}) {
-                        $logger->error($error);
-                      }
-                    }
-                    elsif ($titleResult->{'errors'} && ref($titleResult->{'errors'}) eq 'STRING') {
-                      $logger->error($titleResult->{'errors'});
-                    }
-                    elsif ($titleResult->{'errors'} && ref($titleResult->{'errors'}) eq 'HASH') {
-                      foreach my $error ($titleResult->{'errors'}) {
-                        print Dumper($error);
+              if ($endPointType eq 'crossReferencePackage') {
+                if ($results->{'result'} eq 'ERROR'){
+                  $logger->error($results->{'message'});
+                  foreach my $error (@{$results->{'errors'}}) {
+                    $logger->error($error->{'message'});
+
+                    if ($error->{'errors'}) {
+                      foreach my $field (keys %{$error->{'errors'}}) {
+                        foreach my $fieldError (@{$error->{'errors'}->{$field}}) {
+                          $logger->error($fieldError->{'message'});
+                        }
                       }
                     }
                   }
                 }
-                $logger->info("Finished sending title data: $total total, $errors errors ..")
+                else {
+                  $logger->info($results->{'message'});
+                }
+              }
+              else {
+                if ($job_content->{'result'} eq 'ERROR') {
+                  $logger->error($job_content->${'message'});
+                }
+                else {
+                  my $total = scalar @{$results->{'results'}};
+                  my $errors = 0;
+                  foreach my $titleResult (@{$results->{'results'}}) {
+                    if ($titleResult->{'result'} eq 'ERROR') {
+                      $errors += 1;
+                      $logger->error($titleResult->{'message'});
+
+                      if ($titleResult->{'errors'} && ref($titleResult->{'errors'}) eq 'ARRAY') {
+                        foreach my $error (@{$titleResult->{'errors'}}) {
+                          $logger->error($error);
+                        }
+                      }
+                      elsif ($titleResult->{'errors'} && ref($titleResult->{'errors'}) eq 'STRING') {
+                        $logger->error($titleResult->{'errors'});
+                      }
+                      elsif ($titleResult->{'errors'} && ref($titleResult->{'errors'}) eq 'HASH') {
+                        foreach my $error ($titleResult->{'errors'}) {
+                          print Dumper($error);
+                        }
+                      }
+                    }
+                  }
+                  $logger->info("Finished sending title data: $total total, $errors errors ..")
+                }
               }
             }
           }
@@ -4120,7 +4138,7 @@ sub postData {
       if($resp->message){
         $logger->error("HTTP POST error message: ".$resp->message);
       }
-      
+
       if($hashResponse) {
         $logger->error("HTTP POST error message:".$hashResponse->{'message'});
 
@@ -4140,7 +4158,7 @@ sub postData {
           }
         }
       }
-      
+
       return $resp->code;
     }
   }
@@ -4197,6 +4215,32 @@ sub formatZdbId {
   }
 }
 
+sub resolveTippPlatform {
+  my $doiUrl = shift;
+
+  unless (%resolvedPlatform) {
+    my $resolved = checkUrl($doiUrl);
+
+    $logger->debug("Got revolved URL $resolved");
+
+    if ($resolved) {
+      my $url = URI->new( $resolved );
+      my $host = $url->authority;
+      my $scheme = $url->scheme;
+
+      %resolvedPlatform = (
+        name => lc (substr($host, 0, 3) eq 'www' ? substr($host, 4) : $host),
+        primaryUrl => "$scheme://$host"
+      );
+    }
+    else {
+      $logger->error("Unable to resolve platform URL $doiUrl");
+    }
+  }
+
+  return \%resolvedPlatform;
+}
+
 # look up a provided publisher in ONLD.jsonld
 
 sub matchExistingOrgs {
@@ -4223,7 +4267,7 @@ sub matchExistingOrgs {
         my $orgResp = decode_json($resp->content);
         my %orgResp = %{$orgResp};
         my @res = @{$orgResp{'records'}};
-        
+
         foreach my $record (@res) {
           my %record = %{ $record };
           my $gokbNormOrg = normalizeString($record{'name'});
@@ -4250,7 +4294,7 @@ sub matchExistingOrgs {
         else{
           $logger->debug("Could not find GOKb Org $pubName ..");
         }
-        
+
 
 
 
@@ -4268,7 +4312,7 @@ sub matchExistingOrgs {
       $matchOrgsByFile = 1;
     }
   }
-  
+
   if($matchOrgsByFile){
 
     foreach my $ncsuOrg ( @{ $orgsJSON{'@graph'} } ) {
@@ -4297,7 +4341,7 @@ sub matchExistingOrgs {
       }
     }
   }
-  
+
   if($publisherMatch){
     return $publisherMatch;
   }
@@ -4378,7 +4422,7 @@ sub convertToTimeStamp {
 
 sub checkUrl {
   my $url = shift;
-  
+
   my $mech = WWW::Mechanize->new(autocheck => 0);
   $mech->max_redirect(0);
   $mech->get($url);
@@ -4389,7 +4433,7 @@ sub checkUrl {
     if (defined $location) {
       my $redirectMech = WWW::Mechanize->new(autocheck => 0);
       $redirectMech->get(URI->new_abs($location, $mech->base()));
-      
+
       if ($redirectMech->status() >= 400) {
         $logger->warn("URL $url is not currently valid!");
         return;
